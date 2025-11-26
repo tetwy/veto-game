@@ -82,10 +82,13 @@ export const getRoomDetails = async (roomCode: string) => {
   return data;
 };
 
+// gameService.ts içindeki createRoom fonksiyonunu bununla değiştir:
+
 export const createRoom = async (
   hostName: string, 
   hostId: string, 
-  settings: { targetScore: number, roundTime: number, passLimit: number }
+  settings: { targetScore: number, roundTime: number, passLimit: number },
+  teamNames: { teamA: string, teamB: string } // YENİ PARAMETRE
 ): Promise<string | null> => {
   const code = generateRoomCode();
   
@@ -96,7 +99,9 @@ export const createRoom = async (
        status: 'LOBBY', 
        target_score: settings.targetScore,
        round_time: settings.roundTime,
-       pass_limit: settings.passLimit
+       pass_limit: settings.passLimit,
+       team_a_name: teamNames.teamA, // KAYDEDİYORUZ
+       team_b_name: teamNames.teamB  // KAYDEDİYORUZ
     }]);
 
   if (roomError) {

@@ -62,18 +62,26 @@ function App() {
     setGameState(GameState.CREATE_ROOM);
   }, []);
 
-  const handleConfirmRoom = useCallback(async (settings: GameSettings, initialTeams: Team[]) => {
+  const handleConfirmRoom = useCallback(async (settings: GameSettings, updatedTeams: Team[]) => {
     if (!currentUser) return;
     setIsLoading(true);
     
-    // Ayarların tamamını gönderiyoruz
-    const code = await createRoom(currentUser.name, currentUser.id, settings);
+    // GÜNCELLEME: Takım isimlerini de gönderiyoruz
+    const teamNames = {
+      teamA: updatedTeams[0].name,
+      teamB: updatedTeams[1].name
+    };
+
+    const code = await createRoom(currentUser.name, currentUser.id, settings, teamNames);
     
     if (code) {
       setRoomCode(code);
       setGameSettings(settings);
       setTeams(prev => {
+         // Yerel state'i de hemen güncelle ki host beklerken görsün
          const t = [...prev];
+         t[0].name = teamNames.teamA;
+         t[1].name = teamNames.teamB;
          t[0].players = [currentUser];
          t[1].players = [];
          return t;
@@ -128,8 +136,8 @@ function App() {
 
         const roomData = await getRoomDetails(roomCode);
         
-        // Ayarları Eşitle
         if (roomData) {
+           // Ayarları Eşitle
            setGameSettings({
              targetScore: roomData.target_score ?? DEFAULT_SETTINGS.targetScore,
              roundTime: roomData.round_time ?? DEFAULT_SETTINGS.roundTime,
@@ -140,12 +148,16 @@ function App() {
         setTeams(prev => [
           { 
             ...prev[0], 
+            // GÜNCELLEME: İsimleri DB'den al
+            name: roomData?.team_a_name || prev[0].name,
             players: teamA, 
             score: roomData?.team_a_score || 0,
             currentNarratorIndex: roomData?.team_a_narrator_index || 0 
           },
           { 
             ...prev[1], 
+            // GÜNCELLEME: İsimleri DB'den al
+            name: roomData?.team_b_name || prev[1].name,
             players: teamB, 
             score: roomData?.team_b_score || 0,
             currentNarratorIndex: roomData?.team_b_narrator_index || 0
@@ -160,7 +172,6 @@ function App() {
 
             if (roomData.status === 'PLAYING' && gameState === GameState.LOBBY) {
                 if (cards.length === 0) {
-                    // Seed'li kart çekimi (Herkes aynı kartı görsün)
                     const c = await getGameCards(roomCode);
                     setCards(c);
                 }
@@ -213,7 +224,7 @@ function App() {
     return () => clearInterval(interval);
   }, [turnExpiresAt, gameState, currentUser]);
 
-  // --- GAME ACTIONS (OPTIMISTIC UI - HIZLANDIRILMIŞ) ---
+  // --- GAME ACTIONS ---
 
   const startGame = useCallback(async () => {
     setIsLoading(true);
@@ -228,7 +239,6 @@ function App() {
      const newIndexA = teams[0].currentNarratorIndex + (currentTeamIndex === 0 ? 1 : 0);
      const newIndexB = teams[1].currentNarratorIndex + (currentTeamIndex === 1 ? 1 : 0);
 
-     // 1. ANINDA GÖRÜNTÜ (Optimistic Update)
      setCurrentTeamIndex(currentTeamIndex === 0 ? 1 : 0);
      setTeams(prev => {
         const newTeams = [...prev];
@@ -236,9 +246,8 @@ function App() {
         return newTeams;
      });
      setCurrentCardIndex((prev) => (prev + 1) % cards.length);
-     setTimeLeft(gameSettings.roundTime); // Görsel reset
+     setTimeLeft(gameSettings.roundTime); 
 
-     // 2. ARKA PLANDA GÖNDER
      await startNextTurn(roomCode, nextTeam, gameSettings.roundTime, {
        indexA: newIndexA,
        indexB: newIndexB
@@ -254,7 +263,6 @@ function App() {
     const isTeamA = currentTeamIndex === 0;
     const newScore = teams[currentTeamIndex].score + 1;
 
-    // 1. ANINDA GÖRÜNTÜ
     setTeams(prev => {
       const updated = [...prev];
       updated[currentTeamIndex].score = newScore;
@@ -262,7 +270,6 @@ function App() {
     });
     setCurrentCardIndex((prev) => (prev + 1) % cards.length);
 
-    // 2. ARKA PLANDA GÖNDER (Bitiş Kontrolü Dahil)
     if (newScore >= gameSettings.targetScore) {
        await supabase.from('rooms').update({ 
           status: 'FINISHED',
@@ -281,7 +288,6 @@ function App() {
     const isTeamA = currentTeamIndex === 0;
     const newScore = teams[currentTeamIndex].score - 1;
 
-    // 1. ANINDA GÖRÜNTÜ
     setTeams(prev => {
       const updated = [...prev];
       updated[currentTeamIndex].score = newScore;
@@ -289,7 +295,6 @@ function App() {
     });
     setCurrentCardIndex((prev) => (prev + 1) % cards.length);
 
-    // 2. ARKA PLANDA GÖNDER
     await updateGameState(roomCode, { 
         scoreA: isTeamA ? newScore : undefined,
         scoreB: !isTeamA ? newScore : undefined,
@@ -300,11 +305,9 @@ function App() {
   const handlePass = async () => {
     if (gameSettings.passLimit > 0 && passCount >= gameSettings.passLimit) return;
     
-    // 1. ANINDA GÖRÜNTÜ
     setPassCount(prev => prev + 1);
     setCurrentCardIndex((prev) => (prev + 1) % cards.length);
 
-    // 2. ARKA PLANDA GÖNDER
     await updateGameState(roomCode, { 
         passCount: passCount + 1,
         cardIndex: (currentCardIndex + 1) % cards.length
@@ -336,24 +339,29 @@ function App() {
     let roleColor = isMeNarrator ? "text-brand-primary" : (isMyTeamActive ? "text-brand-secondary" : "text-brand-danger");
 
     return (
-      <div className="min-h-screen flex flex-col items-center bg-slate-900 relative overflow-hidden">
+      // CSS DÜZELTMESİ: h-screen yerine h-[100dvh] ve overflow-hidden
+      <div className="h-[100dvh] w-full flex flex-col items-center bg-slate-900 relative overflow-hidden">
         <div className={`absolute top-0 left-0 w-full h-2 bg-gradient-to-r ${currentTeamIndex === 0 ? 'from-brand-primary to-transparent' : 'from-transparent to-brand-success'}`}></div>
         
-        <div className="w-full pt-4 px-4 z-20">
+        {/* Üst Kısım: Timer (Küçültüldü) */}
+        <div className="w-full pt-2 px-4 z-20 flex-shrink-0">
           <GameTimer timeLeft={timeLeft} totalTime={gameSettings.roundTime} isActive={true} onTimeUp={() => {}} />
         </div>
 
+        {/* Skorlar (Konumu ayarlandı) */}
         <ScoreBoard teams={teams} currentTeamId={activeTeam.id} currentNarrator={currentNarrator} />
 
-        <div className="flex-1 w-full max-w-md flex flex-col items-center justify-center p-4 z-10 -mt-10">
-          <div className="mb-6 flex flex-col items-center animate-[fadeIn_0.5s_ease-out]">
-            <div className={`px-4 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs font-bold tracking-widest uppercase mb-2 ${roleColor}`}>
+        {/* Orta Alan: Kart */}
+        <div className="flex-1 w-full max-w-md flex flex-col items-center justify-center p-2 z-10 overflow-hidden">
+          
+          {/* Anlatan Kişi Bilgisi */}
+          <div className="mb-2 flex flex-col items-center flex-shrink-0">
+            <div className={`px-3 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-[10px] font-bold tracking-widest uppercase mb-1 ${roleColor}`}>
               {roleText}
             </div>
             {currentNarrator && (
               <div className="flex items-center gap-2 text-slate-300">
-                 <div className="p-2 bg-slate-800 rounded-full"><Mic size={16} className="text-white animate-pulse" /></div>
-                 <span className="font-bold text-lg">{currentNarrator.name}</span>
+                 <span className="font-bold text-sm md:text-lg">{currentNarrator.name}</span>
               </div>
             )}
           </div>
@@ -361,11 +369,14 @@ function App() {
           {currentCard && <GameCard card={currentCard} isMasked={shouldMaskCard} />}
         </div>
 
+        {/* Alt Kısım: Butonlar */}
         {isMeNarrator && (
-          <GameControls 
-            onCorrect={handleCorrect} onTaboo={handleTaboo} onPass={handlePass}
-            passCount={passCount} passLimit={gameSettings.passLimit}
-          />
+          <div className="w-full flex-shrink-0">
+             <GameControls 
+                onCorrect={handleCorrect} onTaboo={handleTaboo} onPass={handlePass}
+                passCount={passCount} passLimit={gameSettings.passLimit}
+             />
+          </div>
         )}
       </div>
     );
