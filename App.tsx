@@ -304,29 +304,34 @@ function App() {
       <div className="h-[100dvh] w-full flex flex-col bg-slate-900 overflow-hidden relative">
         <div className={`absolute top-0 left-0 w-full h-1 z-50 bg-gradient-to-r transition-all duration-500 ${currentTeamIndex === 0 ? 'from-brand-primary to-transparent' : 'from-transparent to-brand-success'}`}></div>
         
-        <div className="flex-shrink-0 w-full pt-4 px-4 z-30">
+        {/* ÜST: Timer ve Skor */}
+        <div className="flex-shrink-0 w-full pt-3 px-3 z-30">
            <GameTimer timeLeft={timeLeft} totalTime={gameSettings.roundTime} isActive={true} onTimeUp={() => {}} />
            <div className="max-w-5xl mx-auto">
               <ScoreBoard teams={teams} currentTeamId={activeTeam.id} currentNarrator={currentNarrator} />
            </div>
         </div>
 
+        {/* ORTA: Kart (Esnek) */}
         <div className="flex-1 relative w-full max-w-3xl mx-auto px-4 flex flex-col justify-center items-center min-h-0 z-20">
-           <div className="mb-4 flex flex-col items-center flex-shrink-0 animate-fadeIn">
+           
+           {/* Rol Bilgisi */}
+           <div className="mb-3 flex flex-col items-center flex-shrink-0 animate-fadeIn">
               <div className={`px-4 py-1 rounded-full bg-slate-800 border border-slate-700 text-[10px] md:text-xs font-black tracking-[0.2em] uppercase mb-2 shadow-lg ${roleColor}`}>
                  {roleText}
               </div>
               {currentNarrator && (
                  <div className="flex items-center gap-2 text-slate-400">
-                    <span className="text-xs font-bold uppercase tracking-widest">Anlatan:</span>
+                    <div className="p-1.5 bg-slate-800 rounded-full"><Mic size={14} className="text-white animate-pulse" /></div>
                     <span className="text-white font-bold text-lg shadow-purple-500/20 drop-shadow-md">{currentNarrator.name}</span>
                  </div>
               )}
            </div>
 
-           <div className="w-full flex-1 flex flex-col justify-center min-h-0 max-h-[600px]">
+           {/* Kart Alanı */}
+           <div className="w-full flex-1 flex flex-col justify-center min-h-0 pb-2">
               {isProcessingTurn ? (
-                 <div className="animate-pulse text-center text-slate-500 flex flex-col items-center gap-4">
+                 <div className="animate-pulse text-center text-slate-500 flex flex-col items-center gap-4 my-auto">
                     <div className="p-4 bg-slate-800 rounded-full border border-slate-700">
                        <Loader2 className="animate-spin text-brand-primary" size={32} />
                     </div>
@@ -338,9 +343,10 @@ function App() {
            </div>
         </div>
 
+        {/* ALT: Butonlar */}
         {isMeNarrator && !isProcessingTurn && (
-          <div className="flex-shrink-0 w-full p-4 md:p-6 z-40 bg-gradient-to-t from-slate-900 via-slate-900/90 to-transparent">
-             <div className="max-w-xl mx-auto">
+          <div className="flex-shrink-0 w-full px-4 pb-6 pt-2 z-40 bg-gradient-to-t from-slate-900 via-slate-900 to-transparent">
+             <div className="max-w-md mx-auto">
                 <GameControls 
                    onCorrect={handleCorrect} onTaboo={handleTaboo} onPass={handlePass}
                    passCount={passCount} passLimit={gameSettings.passLimit}
