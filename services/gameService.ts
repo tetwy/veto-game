@@ -1,10 +1,7 @@
 import { supabase } from '../supabaseClient';
-import { CardData, Player } from '../types';
+import { CardData, Player, GameSettings } from '../types';
 
 // --- YARDIMCI: Deterministik Rastgelelik (Seeded Random) ---
-// Bu fonksiyonlar sayesinde, aynı "Oda Kodu" her zaman aynı "Karıştırma Sırasını" verir.
-
-// 1. String'i sayısal bir "tohum"a (seed) çevirir
 const cyrb128 = (str: string) => {
     let h1 = 1779033703, h2 = 3144134277,
         h3 = 1013904242, h4 = 2773480762;
@@ -22,7 +19,6 @@ const cyrb128 = (str: string) => {
     return (h1^h2^h3^h4) >>> 0;
 }
 
-// 2. Tohuma göre rastgele sayı üretir
 const mulberry32 = (a: number) => {
     return () => {
       let t = a += 0x6D2B79F5;
@@ -32,7 +28,6 @@ const mulberry32 = (a: number) => {
     }
 }
 
-// 3. Listeyi tohuma göre karıştırır
 const shuffleWithSeed = <T>(array: T[], seed: string): T[] => {
     const seedNumber = cyrb128(seed);
     const random = mulberry32(seedNumber);
@@ -56,13 +51,9 @@ const generateRoomCode = () => {
   return code;
 };
 
-// GÜNCELLEME: Artık roomCode alıyor ve ona göre karıştırıyor
 export const getGameCards = async (roomCode: string): Promise<CardData[]> => {
   const { data } = await supabase.from('cards').select('*');
   if (!data) return [];
-  
-  // Oda kodunu seed olarak kullanıp karıştırıyoruz
-  // Böylece odadaki HERKES aynı sırayı elde ediyor!
   return shuffleWithSeed(data, roomCode) as CardData[];
 };
 
@@ -82,13 +73,11 @@ export const getRoomDetails = async (roomCode: string) => {
   return data;
 };
 
-// gameService.ts içindeki createRoom fonksiyonunu bununla değiştir:
-
 export const createRoom = async (
   hostName: string, 
   hostId: string, 
-  settings: { targetScore: number, roundTime: number, passLimit: number },
-  teamNames: { teamA: string, teamB: string } // YENİ PARAMETRE
+  settings: GameSettings, 
+  teamNames: { teamA: string, teamB: string }
 ): Promise<string | null> => {
   const code = generateRoomCode();
   
@@ -100,8 +89,8 @@ export const createRoom = async (
        target_score: settings.targetScore,
        round_time: settings.roundTime,
        pass_limit: settings.passLimit,
-       team_a_name: teamNames.teamA, // KAYDEDİYORUZ
-       team_b_name: teamNames.teamB  // KAYDEDİYORUZ
+       team_a_name: teamNames.teamA,
+       team_b_name: teamNames.teamB
     }]);
 
   if (roomError) {
@@ -119,16 +108,32 @@ export const createRoom = async (
   return code;
 };
 
+// GÜNCELLENDİ: Otomatik Takım Dengeleme
 export const joinRoom = async (code: string, playerName: string, playerId: string): Promise<'SUCCESS' | 'NOT_FOUND' | 'ERROR'> => {
+  // 1. Oda var mı?
   const { data: room } = await supabase.from('rooms').select('code').eq('code', code).single();
   if (!room) return 'NOT_FOUND';
+
+  // 2. Mevcut oyuncu sayılarını çek
+  const { data: players } = await supabase
+    .from('players')
+    .select('team')
+    .eq('room_code', code);
+
+  const countA = players?.filter(p => p.team === 'A').length || 0;
+  const countB = players?.filter(p => p.team === 'B').length || 0;
+
+  // 3. Hangi takım azsa oraya ekle
+  // (Host A'da olduğu için ilk gelen B'ye gitmeli: 1 <= 0 Yanlış -> B)
+  const assignedTeam = countA <= countB ? 'A' : 'B';
   
+  // 4. Ekle
   const { error } = await supabase.from('players').insert([{
       id: playerId,
       room_code: code,
       name: playerName,
       is_host: false,
-      team: 'B' 
+      team: assignedTeam 
     }]);
   return error ? 'ERROR' : 'SUCCESS';
 };
@@ -152,7 +157,8 @@ export const startNextTurn = async (
   newNarratorIndices?: { indexA: number, indexB: number },
   isGameStart = false
 ) => {
-  const expiresAt = new Date(Date.now() + roundTime * 1000).toISOString();
+  const bufferTime = 2000; 
+  const expiresAt = new Date(Date.now() + (roundTime * 1000) + bufferTime).toISOString();
   
   const updateData: any = {
     current_team: nextTeam,
@@ -190,6 +196,24 @@ export const updateGameState = async (roomCode: string, updates: {
   if (updates.passCount !== undefined) dbUpdates.pass_count = updates.passCount;
 
   await supabase.from('rooms').update(dbUpdates).eq('code', roomCode);
+};
+
+export const resetGame = async (roomCode: string) => {
+  await supabase.from('rooms').update({
+    status: 'LOBBY',
+    team_a_score: 0,
+    team_b_score: 0,
+    current_card_index: 0,
+    pass_count: 0,
+  }).eq('code', roomCode);
+};
+
+export const updateRoomSettings = async (roomCode: string, settings: GameSettings) => {
+  await supabase.from('rooms').update({
+    round_time: settings.roundTime,
+    target_score: settings.targetScore,
+    pass_limit: settings.passLimit
+  }).eq('code', roomCode);
 };
 
 export const subscribeToRoom = (roomCode: string, onUpdate: (payload: any) => void) => {

@@ -1,7 +1,6 @@
-
 import React from 'react';
 import { Team, Player } from '../types';
-import { Trophy, Mic, User } from 'lucide-react';
+import { Trophy, Mic } from 'lucide-react';
 
 interface ScoreBoardProps {
   teams: Team[];
@@ -10,87 +9,83 @@ interface ScoreBoardProps {
 }
 
 const ScoreBoard: React.FC<ScoreBoardProps> = ({ teams, currentTeamId, currentNarrator }) => {
+  // Lideri bulma mantığı
+  const maxScore = Math.max(...teams.map(t => t.score));
+  const hasScore = maxScore > 0; // Sadece 0'dan büyükse kupa göster
+
   return (
     <>
-      {/* Container - Mobilde üstte yan yana, Masaüstünde ayrık ve yanlara sabitlenmiş */}
-      <div className="w-full flex md:absolute md:inset-0 md:pointer-events-none justify-between items-start md:items-center px-2 md:px-6 py-2 z-20">
-        
+      {/* --- MOBİL GÖRÜNÜM --- */}
+      <div className="md:hidden w-full flex justify-between items-center bg-slate-800/80 p-3 rounded-2xl mb-4 border border-slate-700/50 backdrop-blur-md shadow-lg">
+        {teams.map((team) => {
+           const isActive = team.id === currentTeamId;
+           const isLeading = hasScore && team.score === maxScore;
+
+           return (
+             <div key={team.id} className={`relative flex flex-col items-center w-[48%] p-2 rounded-xl transition-all ${isActive ? 'bg-slate-700/50 ring-1 ring-brand-primary/30' : ''}`}>
+                {isLeading && <Trophy size={14} className="absolute -top-2 text-brand-warning drop-shadow-md animate-bounce" fill="currentColor" />}
+                <span className={`text-[10px] font-black uppercase tracking-wider mb-1 ${team.color}`}>{team.name}</span>
+                <span className="text-2xl font-black text-white leading-none">{team.score}</span>
+             </div>
+           )
+        })}
+      </div>
+
+      {/* --- MASAÜSTÜ GÖRÜNÜM --- */}
+      <div className="hidden md:flex absolute inset-0 pointer-events-none justify-between items-center px-12 z-0">
         {teams.map((team, index) => {
           const isActive = team.id === currentTeamId;
-          const isLeft = index === 0; // A Takımı solda, B Takımı sağda
+          const isLeft = index === 0;
+          const isLeading = hasScore && team.score === maxScore;
           
           return (
             <div 
               key={team.id}
               className={`
-                relative flex flex-col transition-all duration-500 border overflow-hidden
+                relative flex flex-col transition-all duration-500 border overflow-hidden pointer-events-auto
                 ${isActive 
-                  ? 'bg-slate-800/95 border-brand-primary shadow-[0_0_30px_-10px_rgba(99,102,241,0.5)] z-10' 
-                  : 'bg-slate-900/60 border-slate-700/50 opacity-80 grayscale-[0.8]'}
-                ${isLeft ? 'items-center md:items-start rounded-r-2xl rounded-bl-2xl' : 'items-center md:items-end rounded-l-2xl rounded-br-2xl'}
-                w-[48%] md:w-64 md:pointer-events-auto
-                p-2 md:p-5
-                max-h-[160px] md:max-h-[80vh] /* Mobilde yükseklik sınırı */
+                  ? 'bg-slate-800/90 border-brand-primary shadow-[0_0_40px_-10px_rgba(99,102,241,0.4)] scale-105 z-10' 
+                  : 'bg-slate-900/40 border-slate-700/30 opacity-50 grayscale-[0.5] scale-95'}
+                ${isLeft ? 'items-start rounded-r-3xl border-l-0' : 'items-end rounded-l-3xl border-r-0'}
+                w-72 p-8 backdrop-blur-xl
               `}
             >
-              {/* Team Name & Score */}
-              <div className={`flex flex-col w-full mb-3 ${isLeft ? 'md:items-start items-center' : 'md:items-end items-center'}`}>
-                <h3 className={`font-black text-xs md:text-lg uppercase tracking-wider truncate max-w-full ${team.color}`}>
-                  {team.name}
-                </h3>
-                <div className="relative">
-                   <span className="text-3xl md:text-5xl font-black text-white leading-none drop-shadow-md">
-                     {team.score}
-                   </span>
-                   {isActive && team.score > 0 && (
-                      <Trophy 
-                        size={16} 
-                        className="absolute -top-2 -right-3 text-brand-warning animate-bounce hidden md:block" 
-                        fill="currentColor" 
-                      />
-                   )}
+              {/* İsim, Skor ve Kupa */}
+              <div className={`flex flex-col w-full mb-6 ${isLeft ? 'items-start' : 'items-end'}`}>
+                <div className="flex items-center gap-3 mb-2">
+                   {isLeading && !isLeft && <Trophy size={24} className="text-brand-warning animate-bounce" fill="currentColor" />}
+                   <h3 className={`font-black text-xl uppercase tracking-widest truncate max-w-[200px] ${team.color}`}>
+                     {team.name}
+                   </h3>
+                   {isLeading && isLeft && <Trophy size={24} className="text-brand-warning animate-bounce" fill="currentColor" />}
                 </div>
+                <span className="text-7xl font-black text-white leading-none drop-shadow-2xl tracking-tighter">
+                  {team.score}
+                </span>
               </div>
 
-              {/* Player List */}
-              <div className={`
-                 w-full flex flex-col gap-1.5 overflow-y-auto custom-scrollbar pr-1
-                 ${isLeft ? 'md:items-start items-center' : 'md:items-end items-center'}
-              `}>
+              {/* Oyuncu Listesi */}
+              <div className={`w-full flex flex-col gap-2 ${isLeft ? 'items-start' : 'items-end'}`}>
                 {team.players.map((player) => {
                   const isNarrator = isActive && currentNarrator?.id === player.id;
-
                   return (
                     <div 
                       key={player.id} 
                       className={`
-                        flex items-center gap-2 px-2 py-1 rounded-lg transition-all w-full md:w-auto max-w-[140px] md:max-w-none justify-center md:justify-start
+                        flex items-center gap-3 px-4 py-2 rounded-lg transition-all
                         ${isNarrator 
-                          ? 'bg-brand-primary text-white shadow-lg font-bold ring-1 ring-white/20' 
-                          : 'text-slate-400 font-medium hover:bg-slate-800/50'}
-                        ${!isLeft ? 'md:flex-row-reverse' : ''}
+                          ? 'bg-brand-primary text-white shadow-lg font-bold ring-1 ring-white/20 translate-x-2' 
+                          : 'text-slate-400 font-medium'}
+                        ${!isLeft && isNarrator ? '-translate-x-2' : ''}
+                        ${!isLeft ? 'flex-row-reverse' : ''}
                       `}
                     >
-                      {/* Icon */}
-                      {isNarrator ? (
-                        <Mic size={14} className="animate-pulse flex-shrink-0" />
-                      ) : (
-                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-slate-600' : 'bg-slate-700'}`} />
-                      )}
-                      
-                      {/* Name */}
-                      <span className="text-xs truncate">{player.name}</span>
+                      {isNarrator ? <Mic size={16} className="animate-pulse" /> : <div className="w-1.5 h-1.5 rounded-full bg-slate-600"/>}
+                      <span className="text-sm">{player.name}</span>
                     </div>
                   );
                 })}
-
-                {team.players.length === 0 && (
-                   <span className="text-[10px] text-slate-600 italic mt-1">Oyuncu bekleniyor...</span>
-                )}
               </div>
-
-              {/* Decorative Line */}
-              <div className={`absolute bottom-0 ${isLeft ? 'left-0' : 'right-0'} w-2/3 h-1 ${isActive ? 'bg-brand-primary' : 'bg-slate-700'}`}></div>
             </div>
           );
         })}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { GameState, Team, CardData, GameSettings, Player } from './types';
 import { INITIAL_TEAMS, DEFAULT_SETTINGS } from './constants';
 import { 
@@ -11,20 +11,21 @@ import {
   startNextTurn, 
   updateGameState, 
   getRoomDetails,
-  switchPlayerTeam 
+  switchPlayerTeam,
+  resetGame,
+  updateRoomSettings
 } from './services/gameService';
 import { supabase } from './supabaseClient';
-import { Mic } from 'lucide-react';
+import { Mic, Loader2 } from 'lucide-react';
 
 import WelcomeScreen from './components/WelcomeScreen';
-import CreateRoomScreen from './components/CreateRoomScreen';
 import JoinRoomScreen from './components/JoinRoomScreen';
 import LobbyScreen from './components/LobbyScreen';
 import GameCard from './components/GameCard';
 import ScoreBoard from './components/ScoreBoard';
 import GameControls from './components/GameControls';
-import GameTimer from './components/GameTimer';
 import GameOverScreen from './components/GameOverScreen';
+import GameTimer from './components/GameTimer';
 
 function App() {
   const [gameState, setGameState] = useState<GameState>(GameState.WELCOME);
@@ -37,59 +38,45 @@ function App() {
 
   // Synced State
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
-  const [currentTeamIndex, setCurrentTeamIndex] = useState(0); // 0=A, 1=B
+  const [currentTeamIndex, setCurrentTeamIndex] = useState(0);
   const [passCount, setPassCount] = useState(0);
   const [timeLeft, setTimeLeft] = useState(0);
   const [turnExpiresAt, setTurnExpiresAt] = useState<string | null>(null);
+  
+  const [isProcessingTurn, setIsProcessingTurn] = useState(false);
+  const lastHandledTurnRef = useRef<string | null>(null);
+
+  // YENİ: Manuel Dönüş Kontrolü (Loop Sorunu İçin)
+  const [userManuallyReturnedToLobby, setUserManuallyReturnedToLobby] = useState(false);
 
   // Computed Properties
   const activeTeam = teams[currentTeamIndex];
-  
   const currentNarrator = useMemo(() => {
     if (activeTeam.players.length === 0) return null;
     return activeTeam.players[activeTeam.currentNarratorIndex % activeTeam.players.length];
   }, [activeTeam]);
-
   const isMeNarrator = currentUser?.id === currentNarrator?.id;
   const isMyTeamActive = activeTeam.players.some(p => p.id === currentUser?.id);
   const shouldMaskCard = isMyTeamActive && !isMeNarrator;
 
-  // --- SETUP & LOBBY ---
+  // --- SETUP & LOBBY ACTIONS ---
 
-  const handleCreateRoomInit = useCallback((playerName: string) => {
-    const myId = `p_${Date.now()}`;
-    setCurrentUser({ id: myId, name: playerName, isHost: true });
-    setGameState(GameState.CREATE_ROOM);
-  }, []);
-
-  const handleConfirmRoom = useCallback(async (settings: GameSettings, updatedTeams: Team[]) => {
-    if (!currentUser) return;
+  const handleCreateRoom = useCallback(async (playerName: string) => {
     setIsLoading(true);
-    
-    // GÜNCELLEME: Takım isimlerini de gönderiyoruz
-    const teamNames = {
-      teamA: updatedTeams[0].name,
-      teamB: updatedTeams[1].name
-    };
-
-    const code = await createRoom(currentUser.name, currentUser.id, settings, teamNames);
-    
+    const myId = `p_${Date.now()}`;
+    const defaultTeamNames = { teamA: INITIAL_TEAMS[0].name, teamB: INITIAL_TEAMS[1].name };
+    const code = await createRoom(playerName, myId, DEFAULT_SETTINGS, defaultTeamNames);
     if (code) {
+      const hostUser = { id: myId, name: playerName, isHost: true };
+      setCurrentUser(hostUser);
       setRoomCode(code);
-      setGameSettings(settings);
-      setTeams(prev => {
-         // Yerel state'i de hemen güncelle ki host beklerken görsün
-         const t = [...prev];
-         t[0].name = teamNames.teamA;
-         t[1].name = teamNames.teamB;
-         t[0].players = [currentUser];
-         t[1].players = [];
-         return t;
-      });
+      setGameSettings(DEFAULT_SETTINGS);
+      setTeams(prev => { const t = [...prev]; t[0].players = [hostUser]; t[1].players = []; return t; });
       setGameState(GameState.LOBBY);
+      setUserManuallyReturnedToLobby(false); // Reset
     }
     setIsLoading(false);
-  }, [currentUser]);
+  }, []);
 
   const handleJoinRoomInit = useCallback((playerName: string) => {
     const myId = `p_${Date.now()}`;
@@ -104,6 +91,7 @@ function App() {
     if (result === 'SUCCESS') {
       setRoomCode(code);
       setGameState(GameState.LOBBY);
+      setUserManuallyReturnedToLobby(false); // Reset
     } else {
       alert("Hata: Oda bulunamadı.");
     }
@@ -111,12 +99,11 @@ function App() {
   }, [currentUser]);
 
   const handleLeaveLobby = useCallback(async () => {
-    if (roomCode && currentUser) {
-      await leaveRoom(roomCode, currentUser.id);
-    }
+    if (roomCode && currentUser) await leaveRoom(roomCode, currentUser.id);
     setGameState(GameState.WELCOME);
     setCurrentUser(null);
     setRoomCode('');
+    setUserManuallyReturnedToLobby(false);
   }, [roomCode, currentUser]);
 
   const switchTeam = useCallback(async (teamId: 'A' | 'B') => {
@@ -124,20 +111,38 @@ function App() {
     await switchPlayerTeam(currentUser.id, teamId);
   }, [currentUser]);
 
-  // --- SYNC & REALTIME ---
+  const handleRestartGame = useCallback(async () => {
+    if (!currentUser?.isHost) return;
+    setIsLoading(true);
+    await resetGame(roomCode);
+    // Host resetlediğinde, herkes için durum LOBBY olacak.
+    // Bu yüzden manuel bayrağı sıfırlayabiliriz.
+    setUserManuallyReturnedToLobby(false);
+    setGameState(GameState.LOBBY);
+    setIsLoading(false);
+  }, [roomCode, currentUser]);
 
+  // GÜNCELLENEN FONKSİYON: Manuel Dönüş
+  const handleReturnToLobby = useCallback(() => {
+    setUserManuallyReturnedToLobby(true); // İşaretle: Ben bilerek döndüm
+    setGameState(GameState.LOBBY);
+  }, []);
+
+  const handleUpdateSettings = useCallback(async (newSettings: GameSettings) => {
+    setGameSettings(newSettings); 
+    await updateRoomSettings(roomCode, newSettings);
+  }, [roomCode]);
+
+  // --- SYNC & REALTIME ---
   useEffect(() => {
-    if ((gameState === GameState.LOBBY || gameState === GameState.PLAYING) && roomCode) {
-      
+    if ((gameState !== GameState.WELCOME && gameState !== GameState.JOIN_ROOM) && roomCode) {
       const syncData = async () => {
         const players = await getPlayersInRoom(roomCode);
         const teamA = players.filter(p => p.team === 'A');
         const teamB = players.filter(p => p.team === 'B');
-
         const roomData = await getRoomDetails(roomCode);
         
         if (roomData) {
-           // Ayarları Eşitle
            setGameSettings({
              targetScore: roomData.target_score ?? DEFAULT_SETTINGS.targetScore,
              roundTime: roomData.round_time ?? DEFAULT_SETTINGS.roundTime,
@@ -146,22 +151,8 @@ function App() {
         }
 
         setTeams(prev => [
-          { 
-            ...prev[0], 
-            // GÜNCELLEME: İsimleri DB'den al
-            name: roomData?.team_a_name || prev[0].name,
-            players: teamA, 
-            score: roomData?.team_a_score || 0,
-            currentNarratorIndex: roomData?.team_a_narrator_index || 0 
-          },
-          { 
-            ...prev[1], 
-            // GÜNCELLEME: İsimleri DB'den al
-            name: roomData?.team_b_name || prev[1].name,
-            players: teamB, 
-            score: roomData?.team_b_score || 0,
-            currentNarratorIndex: roomData?.team_b_narrator_index || 0
-          }
+          { ...prev[0], name: roomData?.team_a_name || prev[0].name, players: teamA, score: roomData?.team_a_score || 0, currentNarratorIndex: roomData?.team_a_narrator_index || 0 },
+          { ...prev[1], name: roomData?.team_b_name || prev[1].name, players: teamB, score: roomData?.team_b_score || 0, currentNarratorIndex: roomData?.team_b_narrator_index || 0 }
         ]);
 
         if (roomData) {
@@ -169,62 +160,63 @@ function App() {
             setCurrentCardIndex(roomData.current_card_index || 0);
             setPassCount(roomData.pass_count || 0);
             setTurnExpiresAt(roomData.turn_expires_at);
+            setIsProcessingTurn(false);
 
-            if (roomData.status === 'PLAYING' && gameState === GameState.LOBBY) {
+            // --- GÜNCELLENMİŞ STATE GEÇİŞ MANTIĞI (LOOP FIX) ---
+            const serverStatus = roomData.status;
+
+            // 1. Eğer sunucu LOBBY ise ve biz LOBBY'de değilsek -> LOBBY'ye geç.
+            // (Host resetleyince bu çalışır ve manuel bayrağı sıfırlarız)
+            if (serverStatus === 'LOBBY' && gameState !== GameState.LOBBY) {
+                setGameState(GameState.LOBBY);
+                setUserManuallyReturnedToLobby(false); // Artık herkes lobide, bayrağa gerek yok
+            } 
+            // 2. Eğer sunucu PLAYING ise -> Oyuna geç (Her türlü)
+            else if (serverStatus === 'PLAYING' && gameState !== GameState.PLAYING) {
                 if (cards.length === 0) {
                     const c = await getGameCards(roomCode);
                     setCards(c);
                 }
                 setGameState(GameState.PLAYING);
+                setUserManuallyReturnedToLobby(false); // Oyun başladı, bayrağı temizle
             }
-            
-            if (roomData.status === 'FINISHED') {
-                setGameState(GameState.GAME_OVER);
+            // 3. Eğer sunucu FINISHED ise...
+            else if (serverStatus === 'FINISHED' && gameState !== GameState.GAME_OVER) {
+                // KONTROL: Eğer kullanıcı MANUEL OLARAK lobiye döndüyse, onu geri atma!
+                if (!userManuallyReturnedToLobby) {
+                    setGameState(GameState.GAME_OVER);
+                }
             }
         }
       };
-
       syncData();
-
-      const subscription = subscribeToRoom(roomCode, (payload) => {
-        syncData();
-      });
-
-      const handleBeforeUnload = async () => {
-         if (currentUser) await leaveRoom(roomCode, currentUser.id);
-      };
+      const sub = subscribeToRoom(roomCode, () => syncData());
+      const handleBeforeUnload = async () => { if (currentUser) await leaveRoom(roomCode, currentUser.id); };
       window.addEventListener('beforeunload', handleBeforeUnload);
-
-      return () => {
-        subscription.unsubscribe();
-        window.removeEventListener('beforeunload', handleBeforeUnload);
-      };
+      return () => { sub.unsubscribe(); window.removeEventListener('beforeunload', handleBeforeUnload); };
     }
-  }, [gameState, roomCode, currentUser, cards.length]);
+  }, [gameState, roomCode, currentUser, cards.length, userManuallyReturnedToLobby]); // Dependency'ye userManuallyReturnedToLobby eklendi
 
-  // --- TIMER LOGIC ---
+  // --- TIMER & GAME ACTIONS (Aynı) ---
   useEffect(() => {
     if (gameState !== GameState.PLAYING || !turnExpiresAt) return;
-
     const interval = setInterval(() => {
       const now = new Date().getTime();
       const end = new Date(turnExpiresAt).getTime();
       const diff = Math.ceil((end - now) / 1000);
-
       if (diff <= 0) {
         setTimeLeft(0);
-        if (currentUser?.isHost && diff > -2) { 
+        const isTurnAlreadyHandled = lastHandledTurnRef.current === turnExpiresAt;
+        if (currentUser?.isHost && !isTurnAlreadyHandled && !isProcessingTurn) { 
+           lastHandledTurnRef.current = turnExpiresAt; 
            handleTimeUp(); 
         }
       } else {
-        setTimeLeft(diff);
+        setTimeLeft(Math.min(diff, gameSettings.roundTime));
       }
-    }, 500);
-
+    }, 250);
     return () => clearInterval(interval);
-  }, [turnExpiresAt, gameState, currentUser]);
-
-  // --- GAME ACTIONS ---
+  }, [turnExpiresAt, gameState, currentUser, isProcessingTurn, gameSettings.roundTime]);
 
   const startGame = useCallback(async () => {
     setIsLoading(true);
@@ -235,102 +227,72 @@ function App() {
   }, [roomCode, gameSettings]);
 
   const handleNextTurn = async () => {
+     if (isProcessingTurn) return;
+     setIsProcessingTurn(true);
      const nextTeam = currentTeamIndex === 0 ? 'B' : 'A';
      const newIndexA = teams[0].currentNarratorIndex + (currentTeamIndex === 0 ? 1 : 0);
      const newIndexB = teams[1].currentNarratorIndex + (currentTeamIndex === 1 ? 1 : 0);
-
      setCurrentTeamIndex(currentTeamIndex === 0 ? 1 : 0);
-     setTeams(prev => {
-        const newTeams = [...prev];
-        newTeams[currentTeamIndex].currentNarratorIndex += 1;
-        return newTeams;
-     });
-     setCurrentCardIndex((prev) => (prev + 1) % cards.length);
      setTimeLeft(gameSettings.roundTime); 
-
-     await startNextTurn(roomCode, nextTeam, gameSettings.roundTime, {
-       indexA: newIndexA,
-       indexB: newIndexB
-     });
+     await startNextTurn(roomCode, nextTeam, gameSettings.roundTime, { indexA: newIndexA, indexB: newIndexB });
      await updateGameState(roomCode, { cardIndex: (currentCardIndex + 1) % cards.length });
   };
 
-  const handleTimeUp = useCallback(() => {
-    handleNextTurn();
-  }, [currentTeamIndex, currentCardIndex, cards.length, roomCode]);
+  const handleTimeUp = useCallback(() => { handleNextTurn(); }, [handleNextTurn]);
 
   const handleCorrect = async () => {
     const isTeamA = currentTeamIndex === 0;
     const newScore = teams[currentTeamIndex].score + 1;
-
-    setTeams(prev => {
-      const updated = [...prev];
-      updated[currentTeamIndex].score = newScore;
-      return updated;
-    });
+    setTeams(prev => { const u = [...prev]; u[currentTeamIndex].score = newScore; return u; });
     setCurrentCardIndex((prev) => (prev + 1) % cards.length);
-
     if (newScore >= gameSettings.targetScore) {
-       await supabase.from('rooms').update({ 
-          status: 'FINISHED',
-          [isTeamA ? 'team_a_score' : 'team_b_score']: newScore
-       }).eq('code', roomCode);
+       await supabase.from('rooms').update({ status: 'FINISHED', [isTeamA ? 'team_a_score' : 'team_b_score']: newScore }).eq('code', roomCode);
     } else {
-       await updateGameState(roomCode, { 
-          scoreA: isTeamA ? newScore : undefined,
-          scoreB: !isTeamA ? newScore : undefined,
-          cardIndex: (currentCardIndex + 1) % cards.length
-       });
+       await updateGameState(roomCode, { scoreA: isTeamA ? newScore : undefined, scoreB: !isTeamA ? newScore : undefined, cardIndex: (currentCardIndex + 1) % cards.length });
     }
   };
 
   const handleTaboo = async () => {
     const isTeamA = currentTeamIndex === 0;
     const newScore = teams[currentTeamIndex].score - 1;
-
-    setTeams(prev => {
-      const updated = [...prev];
-      updated[currentTeamIndex].score = newScore;
-      return updated;
-    });
+    setTeams(prev => { const u = [...prev]; u[currentTeamIndex].score = newScore; return u; });
     setCurrentCardIndex((prev) => (prev + 1) % cards.length);
-
-    await updateGameState(roomCode, { 
-        scoreA: isTeamA ? newScore : undefined,
-        scoreB: !isTeamA ? newScore : undefined,
-        cardIndex: (currentCardIndex + 1) % cards.length
-    });
+    await updateGameState(roomCode, { scoreA: isTeamA ? newScore : undefined, scoreB: !isTeamA ? newScore : undefined, cardIndex: (currentCardIndex + 1) % cards.length });
   };
 
   const handlePass = async () => {
     if (gameSettings.passLimit > 0 && passCount >= gameSettings.passLimit) return;
-    
     setPassCount(prev => prev + 1);
     setCurrentCardIndex((prev) => (prev + 1) % cards.length);
-
-    await updateGameState(roomCode, { 
-        passCount: passCount + 1,
-        cardIndex: (currentCardIndex + 1) % cards.length
-    });
+    await updateGameState(roomCode, { passCount: passCount + 1, cardIndex: (currentCardIndex + 1) % cards.length });
   };
 
   // --- RENDER ---
-
-  if (gameState === GameState.WELCOME) return <WelcomeScreen onCreateRoom={handleCreateRoomInit} onJoinRoom={handleJoinRoomInit} />;
-  if (gameState === GameState.CREATE_ROOM) return <CreateRoomScreen onBack={() => setGameState(GameState.WELCOME)} onConfirm={handleConfirmRoom} isLoading={isLoading} />;
+  if (gameState === GameState.WELCOME) return <WelcomeScreen onCreateRoom={handleCreateRoom} onJoinRoom={handleJoinRoomInit} />;
   if (gameState === GameState.JOIN_ROOM) return <JoinRoomScreen onBack={() => setGameState(GameState.WELCOME)} onJoin={handleJoinRoomSubmit} isLoading={isLoading} />;
   
   if (gameState === GameState.LOBBY && currentUser) {
     return (
       <LobbyScreen 
-        roomCode={roomCode} teams={teams} currentUser={currentUser} settings={gameSettings}
-        onStartGame={startGame} onSwitchTeam={switchTeam} onLeave={handleLeaveLobby} isHost={currentUser.isHost}
+        roomCode={roomCode} teams={teams} currentUser={currentUser} 
+        settings={gameSettings} 
+        onStartGame={startGame} onSwitchTeam={switchTeam} onLeave={handleLeaveLobby} 
+        onUpdateSettings={handleUpdateSettings} 
+        isHost={currentUser.isHost}
       />
     );
   }
 
   if (gameState === GameState.GAME_OVER) {
-    return <GameOverScreen teams={teams} onRestart={startGame} onHome={handleLeaveLobby} />;
+    return (
+      <GameOverScreen 
+        teams={teams} 
+        onRestart={handleRestartGame} 
+        onReturnToLobby={handleReturnToLobby} 
+        onHome={handleLeaveLobby} 
+        isHost={currentUser?.isHost ?? false} 
+      />
+    );
   }
 
   if (gameState === GameState.PLAYING) {
@@ -339,43 +301,51 @@ function App() {
     let roleColor = isMeNarrator ? "text-brand-primary" : (isMyTeamActive ? "text-brand-secondary" : "text-brand-danger");
 
     return (
-      // CSS DÜZELTMESİ: h-screen yerine h-[100dvh] ve overflow-hidden
-      <div className="h-[100dvh] w-full flex flex-col items-center bg-slate-900 relative overflow-hidden">
-        <div className={`absolute top-0 left-0 w-full h-2 bg-gradient-to-r ${currentTeamIndex === 0 ? 'from-brand-primary to-transparent' : 'from-transparent to-brand-success'}`}></div>
+      <div className="h-[100dvh] w-full flex flex-col bg-slate-900 overflow-hidden relative">
+        <div className={`absolute top-0 left-0 w-full h-1 z-50 bg-gradient-to-r transition-all duration-500 ${currentTeamIndex === 0 ? 'from-brand-primary to-transparent' : 'from-transparent to-brand-success'}`}></div>
         
-        {/* Üst Kısım: Timer (Küçültüldü) */}
-        <div className="w-full pt-2 px-4 z-20 flex-shrink-0">
-          <GameTimer timeLeft={timeLeft} totalTime={gameSettings.roundTime} isActive={true} onTimeUp={() => {}} />
+        <div className="flex-shrink-0 w-full pt-4 px-4 z-30">
+           <GameTimer timeLeft={timeLeft} totalTime={gameSettings.roundTime} isActive={true} onTimeUp={() => {}} />
+           <div className="max-w-5xl mx-auto">
+              <ScoreBoard teams={teams} currentTeamId={activeTeam.id} currentNarrator={currentNarrator} />
+           </div>
         </div>
 
-        {/* Skorlar (Konumu ayarlandı) */}
-        <ScoreBoard teams={teams} currentTeamId={activeTeam.id} currentNarrator={currentNarrator} />
-
-        {/* Orta Alan: Kart */}
-        <div className="flex-1 w-full max-w-md flex flex-col items-center justify-center p-2 z-10 overflow-hidden">
-          
-          {/* Anlatan Kişi Bilgisi */}
-          <div className="mb-2 flex flex-col items-center flex-shrink-0">
-            <div className={`px-3 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-[10px] font-bold tracking-widest uppercase mb-1 ${roleColor}`}>
-              {roleText}
-            </div>
-            {currentNarrator && (
-              <div className="flex items-center gap-2 text-slate-300">
-                 <span className="font-bold text-sm md:text-lg">{currentNarrator.name}</span>
+        <div className="flex-1 relative w-full max-w-3xl mx-auto px-4 flex flex-col justify-center items-center min-h-0 z-20">
+           <div className="mb-4 flex flex-col items-center flex-shrink-0 animate-fadeIn">
+              <div className={`px-4 py-1 rounded-full bg-slate-800 border border-slate-700 text-[10px] md:text-xs font-black tracking-[0.2em] uppercase mb-2 shadow-lg ${roleColor}`}>
+                 {roleText}
               </div>
-            )}
-          </div>
+              {currentNarrator && (
+                 <div className="flex items-center gap-2 text-slate-400">
+                    <span className="text-xs font-bold uppercase tracking-widest">Anlatan:</span>
+                    <span className="text-white font-bold text-lg shadow-purple-500/20 drop-shadow-md">{currentNarrator.name}</span>
+                 </div>
+              )}
+           </div>
 
-          {currentCard && <GameCard card={currentCard} isMasked={shouldMaskCard} />}
+           <div className="w-full flex-1 flex flex-col justify-center min-h-0 max-h-[600px]">
+              {isProcessingTurn ? (
+                 <div className="animate-pulse text-center text-slate-500 flex flex-col items-center gap-4">
+                    <div className="p-4 bg-slate-800 rounded-full border border-slate-700">
+                       <Loader2 className="animate-spin text-brand-primary" size={32} />
+                    </div>
+                    <span className="text-xs font-bold uppercase tracking-widest">Hazırlanıyor...</span>
+                 </div>
+              ) : (
+                 currentCard && <GameCard card={currentCard} isMasked={shouldMaskCard} />
+              )}
+           </div>
         </div>
 
-        {/* Alt Kısım: Butonlar */}
-        {isMeNarrator && (
-          <div className="w-full flex-shrink-0">
-             <GameControls 
-                onCorrect={handleCorrect} onTaboo={handleTaboo} onPass={handlePass}
-                passCount={passCount} passLimit={gameSettings.passLimit}
-             />
+        {isMeNarrator && !isProcessingTurn && (
+          <div className="flex-shrink-0 w-full p-4 md:p-6 z-40 bg-gradient-to-t from-slate-900 via-slate-900/90 to-transparent">
+             <div className="max-w-xl mx-auto">
+                <GameControls 
+                   onCorrect={handleCorrect} onTaboo={handleTaboo} onPass={handlePass}
+                   passCount={passCount} passLimit={gameSettings.passLimit}
+                />
+             </div>
           </div>
         )}
       </div>
