@@ -51,8 +51,14 @@ const generateRoomCode = () => {
   return code;
 };
 
+// DÜZELTME BURADA YAPILDI: .order('id')
+// Artık herkes kartları aynı ham sırada alacak, sonra aynı şekilde karıştıracak.
 export const getGameCards = async (roomCode: string): Promise<CardData[]> => {
-  const { data } = await supabase.from('cards').select('*');
+  const { data } = await supabase
+    .from('cards')
+    .select('*')
+    .order('id', { ascending: true }); // ÖNEMLİ: Sıralamayı sabitledik
+    
   if (!data) return [];
   return shuffleWithSeed(data, roomCode) as CardData[];
 };
@@ -108,13 +114,10 @@ export const createRoom = async (
   return code;
 };
 
-// GÜNCELLENDİ: Otomatik Takım Dengeleme
 export const joinRoom = async (code: string, playerName: string, playerId: string): Promise<'SUCCESS' | 'NOT_FOUND' | 'ERROR'> => {
-  // 1. Oda var mı?
   const { data: room } = await supabase.from('rooms').select('code').eq('code', code).single();
   if (!room) return 'NOT_FOUND';
 
-  // 2. Mevcut oyuncu sayılarını çek
   const { data: players } = await supabase
     .from('players')
     .select('team')
@@ -123,11 +126,8 @@ export const joinRoom = async (code: string, playerName: string, playerId: strin
   const countA = players?.filter(p => p.team === 'A').length || 0;
   const countB = players?.filter(p => p.team === 'B').length || 0;
 
-  // 3. Hangi takım azsa oraya ekle
-  // (Host A'da olduğu için ilk gelen B'ye gitmeli: 1 <= 0 Yanlış -> B)
   const assignedTeam = countA <= countB ? 'A' : 'B';
   
-  // 4. Ekle
   const { error } = await supabase.from('players').insert([{
       id: playerId,
       room_code: code,
