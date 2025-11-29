@@ -14,9 +14,9 @@ import {
   switchPlayerTeam,
   resetGame,
   updateRoomSettings,
-  safeScorePoint, 
-  safeLosePoint, 
-  safePass, 
+  safeScorePoint,
+  safeLosePoint,
+  safePass,
   safeIncrementCard
 } from './services/gameService';
 import { supabase } from './supabaseClient';
@@ -35,13 +35,14 @@ function App() {
   const [gameState, setGameState] = useState<GameState>(GameState.WELCOME);
   const [currentUser, setCurrentUser] = useState<Player | null>(null);
   
-  // DÜZELTME: 'cards' state'ini sildik. Sadece 'activeDeck' kullanacağız.
   const [allCardsMap, setAllCardsMap] = useState<Record<string, CardData>>({}); 
   const [activeDeck, setActiveDeck] = useState<CardData[]>([]); 
   
   const [teams, setTeams] = useState<Team[]>(INITIAL_TEAMS);
   const [gameSettings, setGameSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
   const [roomCode, setRoomCode] = useState<string>('');
+  
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
 
   // Synced State
@@ -52,9 +53,13 @@ function App() {
   const [turnExpiresAt, setTurnExpiresAt] = useState<string | null>(null);
   const [currentDeckOrderStr, setCurrentDeckOrderStr] = useState<string>(''); 
   
+  // KİLİT MEKANİZMALARI
   const [isProcessingTurn, setIsProcessingTurn] = useState(false);
   const lastHandledTurnRef = useRef<string | null>(null);
   const [userManuallyReturnedToLobby, setUserManuallyReturnedToLobby] = useState(false);
+
+  // FLICKER FIX: Son yapılan işlemin zamanı (Gecikmeli gelen eski veriyi yoksaymak için)
+  const lastActionTimeRef = useRef<number>(0);
 
   const activeTeam = teams[currentTeamIndex];
   const currentNarrator = useMemo(() => {
@@ -65,16 +70,60 @@ function App() {
   const isMyTeamActive = activeTeam.players.some(p => p.id === currentUser?.id);
   const shouldMaskCard = isMyTeamActive && !isMeNarrator;
 
-  // --- 1. Başlangıçta Tüm Kartları Çek ---
+  // --- BAŞLANGIÇ ---
   useEffect(() => {
-    const fetchAllCards = async () => {
-      const cards = await getAllCardsRaw();
-      const map: Record<string, CardData> = {};
-      cards.forEach(c => map[c.id] = c);
-      setAllCardsMap(map);
+    const initApp = async () => {
+      try {
+        const cards = await getAllCardsRaw();
+        const map: Record<string, CardData> = {};
+        cards.forEach(c => map[c.id] = c);
+        setAllCardsMap(map);
+
+        const savedSession = sessionStorage.getItem('VETO_SESSION');
+        if (savedSession) {
+          const { roomCode: savedCode, user } = JSON.parse(savedSession);
+          const roomData = await getRoomDetails(savedCode);
+          if (roomData) {
+             setRoomCode(savedCode);
+             setCurrentUser(user);
+             setGameState(GameState.LOBBY); 
+             const players = await getPlayersInRoom(savedCode);
+             if (!players.some(p => p.id === user.id)) {
+                await joinRoom(savedCode, user.name, user.id);
+             }
+          } else {
+             sessionStorage.removeItem('VETO_SESSION');
+          }
+        }
+      } catch (e) {
+        console.error("Başlatma hatası", e);
+        sessionStorage.removeItem('VETO_SESSION');
+      } finally {
+        setIsRestoringSession(false);
+      }
     };
-    fetchAllCards();
+    initApp();
   }, []);
+
+  const saveSession = (code: string, user: Player) => {
+    sessionStorage.setItem('VETO_SESSION', JSON.stringify({ roomCode: code, user }));
+  };
+
+  const clearSession = () => {
+    sessionStorage.removeItem('VETO_SESSION');
+  };
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (roomCode && currentUser) {
+        e.preventDefault();
+        e.returnValue = ''; 
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [roomCode, currentUser]);
+
 
   // --- SETUP ACTIONS ---
   const handleCreateRoom = useCallback(async (playerName: string) => {
@@ -90,6 +139,7 @@ function App() {
       setTeams(prev => { const t = [...prev]; t[0].players = [hostUser]; t[1].players = []; return t; });
       setGameState(GameState.LOBBY);
       setUserManuallyReturnedToLobby(false);
+      saveSession(code, hostUser);
     }
     setIsLoading(false);
   }, []);
@@ -108,6 +158,7 @@ function App() {
       setRoomCode(code);
       setGameState(GameState.LOBBY);
       setUserManuallyReturnedToLobby(false);
+      saveSession(code, currentUser);
     } else {
       alert("Hata: Oda bulunamadı.");
     }
@@ -120,6 +171,7 @@ function App() {
     setCurrentUser(null);
     setRoomCode('');
     setUserManuallyReturnedToLobby(false);
+    clearSession();
   }, [roomCode, currentUser]);
 
   const switchTeam = useCallback(async (teamId: 'A' | 'B') => {
@@ -162,10 +214,9 @@ function App() {
              passLimit: roomData.pass_limit ?? DEFAULT_SETTINGS.passLimit
            });
 
-           // Deste Sırasını Oluştur
            if (roomData.deck_order && Array.isArray(roomData.deck_order)) {
               const orderStr = JSON.stringify(roomData.deck_order);
-              if (orderStr !== currentDeckOrderStr && Object.keys(allCardsMap).length > 0) {
+              if ((orderStr !== currentDeckOrderStr || activeDeck.length === 0) && Object.keys(allCardsMap).length > 0) {
                   const sortedDeck = roomData.deck_order
                       .map((id: string) => allCardsMap[id])
                       .filter((c: CardData | undefined) => c !== undefined);
@@ -183,10 +234,29 @@ function App() {
 
         if (roomData) {
             setCurrentTeamIndex(roomData.current_team === 'A' ? 0 : 1);
-            setCurrentCardIndex(roomData.current_card_index || 0);
             setPassCount(roomData.pass_count || 0);
-            setTurnExpiresAt(roomData.turn_expires_at);
-            setIsProcessingTurn(false);
+            
+            // FLICKER FIX: Gelen veri eski mi?
+            // Eğer son 500ms içinde yerel olarak işlem yaptıysak (buton bastıysak),
+            // sunucudan gelen ve muhtemelen eski olan 'current_card_index'i görmezden gel.
+            // Sadece süre dolduğunda (turnExpiresAt değiştiğinde) veya kart indexi ileri gittiğinde güncelle.
+            const now = Date.now();
+            const timeSinceLastAction = now - lastActionTimeRef.current;
+            const incomingIndex = roomData.current_card_index || 0;
+
+            if (turnExpiresAt !== roomData.turn_expires_at) {
+                // Yeni tur başlamış, kesin güncelle
+                setTurnExpiresAt(roomData.turn_expires_at);
+                setIsProcessingTurn(false);
+                setCurrentCardIndex(incomingIndex); 
+            } else if (timeSinceLastAction > 1000) { 
+                // Son işlemden 1 saniye geçmiş, artık sunucu verisi güvenilirdir (Stable State)
+                setCurrentCardIndex(incomingIndex);
+            } else if (incomingIndex > currentCardIndex) {
+                // Sunucudan gelen veri bizden ileride, güncelle
+                setCurrentCardIndex(incomingIndex);
+            }
+            // Aksi takdirde (biz ilerideyiz, sunucu geriden geliyor) güncelleme YAPMA.
 
             const serverStatus = roomData.status;
             if (serverStatus === 'LOBBY' && gameState !== GameState.LOBBY) {
@@ -206,11 +276,9 @@ function App() {
       };
       syncData();
       const sub = subscribeToRoom(roomCode, () => syncData());
-      const handleBeforeUnload = async () => { if (currentUser) await leaveRoom(roomCode, currentUser.id); };
-      window.addEventListener('beforeunload', handleBeforeUnload);
-      return () => { sub.unsubscribe(); window.removeEventListener('beforeunload', handleBeforeUnload); };
+      return () => { sub.unsubscribe(); };
     }
-  }, [gameState, roomCode, currentUser, allCardsMap, currentDeckOrderStr, userManuallyReturnedToLobby]);
+  }, [gameState, roomCode, currentUser, allCardsMap, currentDeckOrderStr, userManuallyReturnedToLobby, turnExpiresAt, currentCardIndex]); // currentCardIndex dependency eklendi
 
   // --- TIMER ---
   useEffect(() => {
@@ -219,6 +287,7 @@ function App() {
       const now = new Date().getTime();
       const end = new Date(turnExpiresAt).getTime();
       const diff = Math.ceil((end - now) / 1000);
+      
       if (diff <= 0) {
         setTimeLeft(0);
         const isTurnAlreadyHandled = lastHandledTurnRef.current === turnExpiresAt;
@@ -227,6 +296,9 @@ function App() {
            handleTimeUp(); 
         }
       } else {
+        if (isProcessingTurn && diff > gameSettings.roundTime - 1) {
+           setIsProcessingTurn(false);
+        }
         setTimeLeft(Math.min(diff, gameSettings.roundTime));
       }
     }, 250);
@@ -243,35 +315,37 @@ function App() {
   const handleNextTurn = async () => {
      if (isProcessingTurn) return;
      setIsProcessingTurn(true);
+     lastActionTimeRef.current = Date.now(); // İşlem zamanını kaydet
 
      const nextTeam = currentTeamIndex === 0 ? 'B' : 'A';
      const newIndexA = teams[0].currentNarratorIndex + (currentTeamIndex === 0 ? 1 : 0);
      const newIndexB = teams[1].currentNarratorIndex + (currentTeamIndex === 1 ? 1 : 0);
-
-     // Optimistic Update (Ekran anında değişsin)
+     
      setCurrentTeamIndex(currentTeamIndex === 0 ? 1 : 0);
      setTimeLeft(gameSettings.roundTime); 
-
-     // DB Update
-     await startNextTurn(roomCode, nextTeam, gameSettings.roundTime, { indexA: newIndexA, indexB: newIndexB });
      
-     // Tur bitince de kartı bir tane ilerlet (Yarım kalan kartı geçmek için)
+     await startNextTurn(roomCode, nextTeam, gameSettings.roundTime, { indexA: newIndexA, indexB: newIndexB });
      await safeIncrementCard(roomCode);
   };
 
   const handleTimeUp = useCallback(() => { handleNextTurn(); }, [handleNextTurn]);
 
+  // Yardımcı: Optimistic Kart İlerleme
+  const advanceCardOptimistically = () => {
+    const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
+    setCurrentCardIndex((prev) => (prev + 1) % deckLen);
+    lastActionTimeRef.current = Date.now(); // İşlem zamanını kaydet
+    return deckLen;
+  };
+
   const handleCorrect = async () => {
     const isTeamA = currentTeamIndex === 0;
     const teamKey = isTeamA ? 'A' : 'B';
-    
-    // 1. Optimistic Update (Hemen göster)
     const newScore = teams[currentTeamIndex].score + 1;
+    
     setTeams(prev => { const u = [...prev]; u[currentTeamIndex].score = newScore; return u; });
-    const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
-    setCurrentCardIndex((prev) => (prev + 1) % deckLen);
-
-    // 2. Güvenli DB Update (RPC)
+    const deckLen = advanceCardOptimistically(); // Kartı hemen ilerlet
+    
     if (newScore >= gameSettings.targetScore) {
        await supabase.from('rooms').update({ status: 'FINISHED', [isTeamA ? 'team_a_score' : 'team_b_score']: newScore }).eq('code', roomCode);
     } else {
@@ -282,28 +356,31 @@ function App() {
   const handleTaboo = async () => {
     const isTeamA = currentTeamIndex === 0;
     const teamKey = isTeamA ? 'A' : 'B';
-
-    // Optimistic
-    const newScore = teams[currentTeamIndex].score - 1;
+    
     setTeams(prev => { const u = [...prev]; u[currentTeamIndex].score = newScore; return u; });
-    const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
-    setCurrentCardIndex((prev) => (prev + 1) % deckLen);
-
-    // Güvenli DB
+    const newScore = teams[currentTeamIndex].score - 1;
+    const deckLen = advanceCardOptimistically(); // Kartı hemen ilerlet
+    
     await safeLosePoint(roomCode, teamKey);
   };
 
   const handlePass = async () => {
     if (gameSettings.passLimit > 0 && passCount >= gameSettings.passLimit) return;
     
-    // Optimistic
     setPassCount(prev => prev + 1);
-    const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
-    setCurrentCardIndex((prev) => (prev + 1) % deckLen);
+    const deckLen = advanceCardOptimistically(); // Kartı hemen ilerlet
     
-    // Güvenli DB
     await safePass(roomCode);
   };
+
+  if (isRestoringSession) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white">
+         <Loader2 size={48} className="text-brand-primary animate-spin mb-4" />
+         <h2 className="text-xl font-bold tracking-widest animate-pulse">OYUNA BAĞLANILIYOR...</h2>
+      </div>
+    );
+  }
 
   // --- RENDER ---
   if (gameState === GameState.WELCOME) return <WelcomeScreen onCreateRoom={handleCreateRoom} onJoinRoom={handleJoinRoomInit} />;
@@ -334,9 +411,7 @@ function App() {
   }
 
   if (gameState === GameState.PLAYING) {
-    // EĞER DESTE HENÜZ YÜKLENMEDİYSE BOŞ GÖSTERMEYELİM
     const currentCard = activeDeck.length > 0 ? activeDeck[currentCardIndex] : null;
-    
     let roleText = isMeNarrator ? "ANLATIYORSUN" : (isMyTeamActive ? "TAHMİN ET!" : "YASAK KONTROLÜ!");
     let roleColor = isMeNarrator ? "text-brand-primary" : (isMyTeamActive ? "text-brand-secondary" : "text-brand-danger");
 
