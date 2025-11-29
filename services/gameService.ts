@@ -192,3 +192,35 @@ export const subscribeToRoom = (roomCode: string, onUpdate: (payload: any) => vo
   channel.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` }, onUpdate);
   return channel.subscribe();
 };
+
+// YENİ: Güvenli Kart İlerletme
+export const safeIncrementCard = async (roomCode: string) => {
+  await supabase.rpc('increment_card_index', { room_code: roomCode, amount: 1 });
+};
+
+// YENİ: Güvenli Skor Artırma (Doğru)
+export const safeScorePoint = async (roomCode: string, team: 'A' | 'B') => {
+  if (team === 'A') {
+    await supabase.rpc('increment_score_a', { room_code: roomCode, amount: 1 });
+  } else {
+    await supabase.rpc('increment_score_b', { room_code: roomCode, amount: 1 });
+  }
+  // Skoru artırırken kartı da ilerlet
+  await safeIncrementCard(roomCode);
+};
+
+// YENİ: Güvenli Skor Düşürme (Yasak)
+export const safeLosePoint = async (roomCode: string, team: 'A' | 'B') => {
+  if (team === 'A') {
+    await supabase.rpc('increment_score_a', { room_code: roomCode, amount: -1 });
+  } else {
+    await supabase.rpc('increment_score_b', { room_code: roomCode, amount: -1 });
+  }
+  await safeIncrementCard(roomCode);
+};
+
+// YENİ: Güvenli Pas
+export const safePass = async (roomCode: string) => {
+  await supabase.rpc('increment_pass', { room_code: roomCode });
+  await safeIncrementCard(roomCode);
+};

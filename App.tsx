@@ -13,7 +13,11 @@ import {
   getRoomDetails,
   switchPlayerTeam,
   resetGame,
-  updateRoomSettings
+  updateRoomSettings,
+  safeScorePoint, 
+  safeLosePoint, 
+  safePass, 
+  safeIncrementCard
 } from './services/gameService';
 import { supabase } from './supabaseClient';
 import { Mic, Loader2 } from 'lucide-react';
@@ -239,56 +243,66 @@ function App() {
   const handleNextTurn = async () => {
      if (isProcessingTurn) return;
      setIsProcessingTurn(true);
+
      const nextTeam = currentTeamIndex === 0 ? 'B' : 'A';
      const newIndexA = teams[0].currentNarratorIndex + (currentTeamIndex === 0 ? 1 : 0);
      const newIndexB = teams[1].currentNarratorIndex + (currentTeamIndex === 1 ? 1 : 0);
+
+     // Optimistic Update (Ekran anında değişsin)
      setCurrentTeamIndex(currentTeamIndex === 0 ? 1 : 0);
      setTimeLeft(gameSettings.roundTime); 
-     
+
+     // DB Update
      await startNextTurn(roomCode, nextTeam, gameSettings.roundTime, { indexA: newIndexA, indexB: newIndexB });
-     // DÜZELTME: Artık 'activeDeck.length' kullanılıyor. Kartlar bitmeyecek şekilde mod alındı.
-     // Eğer activeDeck henüz yüklenmediyse 1'e böl ki hata vermesin (0 kart varsa index 0 olur)
-     const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
-     await updateGameState(roomCode, { cardIndex: (currentCardIndex + 1) % deckLen });
+     
+     // Tur bitince de kartı bir tane ilerlet (Yarım kalan kartı geçmek için)
+     await safeIncrementCard(roomCode);
   };
 
   const handleTimeUp = useCallback(() => { handleNextTurn(); }, [handleNextTurn]);
 
   const handleCorrect = async () => {
     const isTeamA = currentTeamIndex === 0;
+    const teamKey = isTeamA ? 'A' : 'B';
+    
+    // 1. Optimistic Update (Hemen göster)
     const newScore = teams[currentTeamIndex].score + 1;
     setTeams(prev => { const u = [...prev]; u[currentTeamIndex].score = newScore; return u; });
-    
-    // Optimistic Update
     const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
     setCurrentCardIndex((prev) => (prev + 1) % deckLen);
 
+    // 2. Güvenli DB Update (RPC)
     if (newScore >= gameSettings.targetScore) {
        await supabase.from('rooms').update({ status: 'FINISHED', [isTeamA ? 'team_a_score' : 'team_b_score']: newScore }).eq('code', roomCode);
     } else {
-       await updateGameState(roomCode, { scoreA: isTeamA ? newScore : undefined, scoreB: !isTeamA ? newScore : undefined, cardIndex: (currentCardIndex + 1) % deckLen });
+       await safeScorePoint(roomCode, teamKey);
     }
   };
 
   const handleTaboo = async () => {
     const isTeamA = currentTeamIndex === 0;
+    const teamKey = isTeamA ? 'A' : 'B';
+
+    // Optimistic
     const newScore = teams[currentTeamIndex].score - 1;
     setTeams(prev => { const u = [...prev]; u[currentTeamIndex].score = newScore; return u; });
-    
     const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
     setCurrentCardIndex((prev) => (prev + 1) % deckLen);
-    
-    await updateGameState(roomCode, { scoreA: isTeamA ? newScore : undefined, scoreB: !isTeamA ? newScore : undefined, cardIndex: (currentCardIndex + 1) % deckLen });
+
+    // Güvenli DB
+    await safeLosePoint(roomCode, teamKey);
   };
 
   const handlePass = async () => {
     if (gameSettings.passLimit > 0 && passCount >= gameSettings.passLimit) return;
-    setPassCount(prev => prev + 1);
     
+    // Optimistic
+    setPassCount(prev => prev + 1);
     const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
     setCurrentCardIndex((prev) => (prev + 1) % deckLen);
     
-    await updateGameState(roomCode, { passCount: passCount + 1, cardIndex: (currentCardIndex + 1) % deckLen });
+    // Güvenli DB
+    await safePass(roomCode);
   };
 
   // --- RENDER ---
