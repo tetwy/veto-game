@@ -1,43 +1,15 @@
 import { supabase } from '../supabaseClient';
 import { CardData, Player, GameSettings } from '../types';
 
-// --- YARDIMCI: Deterministik Rastgelelik (Seeded Random) ---
-const cyrb128 = (str: string) => {
-    let h1 = 1779033703, h2 = 3144134277,
-        h3 = 1013904242, h4 = 2773480762;
-    for (let i = 0, k; i < str.length; i++) {
-        k = str.charCodeAt(i);
-        h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
-        h2 = h3 ^ Math.imul(h2 ^ k, 2869860223);
-        h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
-        h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
-    }
-    h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
-    h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860223);
-    h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
-    h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
-    return (h1^h2^h3^h4) >>> 0;
-}
-
-const mulberry32 = (a: number) => {
-    return () => {
-      let t = a += 0x6D2B79F5;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    }
-}
-
-const shuffleWithSeed = <T>(array: T[], seed: string): T[] => {
-    const seedNumber = cyrb128(seed);
-    const random = mulberry32(seedNumber);
-    const shuffled = [...array];
-    
-    for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
+// --- YARDIMCI: Gerçek Karıştırma (Fisher-Yates Shuffle) ---
+// Bu sefer seed yok, tamamen rastgele karıştırır.
+const shuffleArray = <T>(array: T[]): T[] => {
+  const newArr = [...array];
+  for (let i = newArr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
+  }
+  return newArr;
 }
 
 // --- SERVİS FONKSİYONLARI ---
@@ -51,16 +23,17 @@ const generateRoomCode = () => {
   return code;
 };
 
-// DÜZELTME BURADA YAPILDI: .order('id')
-// Artık herkes kartları aynı ham sırada alacak, sonra aynı şekilde karıştıracak.
-export const getGameCards = async (roomCode: string): Promise<CardData[]> => {
-  const { data } = await supabase
-    .from('cards')
-    .select('*')
-    .order('id', { ascending: true }); // ÖNEMLİ: Sıralamayı sabitledik
-    
-  if (!data) return [];
-  return shuffleWithSeed(data, roomCode) as CardData[];
+// 1. Tüm kartları ham olarak çeker (Sıralama yapmaz)
+export const getAllCardsRaw = async (): Promise<CardData[]> => {
+  const { data } = await supabase.from('cards').select('*');
+  return (data as CardData[]) || [];
+};
+
+// 2. Kart ID'lerini alır, karıştırır ve bir liste olarak döndürür
+export const generateNewDeckOrder = async (): Promise<string[]> => {
+  const cards = await getAllCardsRaw();
+  const ids = cards.map(c => c.id);
+  return shuffleArray(ids);
 };
 
 export const getPlayersInRoom = async (roomCode: string): Promise<Player[]> => {
@@ -79,13 +52,17 @@ export const getRoomDetails = async (roomCode: string) => {
   return data;
 };
 
+// GÜNCELLENDİ: Odayı kurarken desteyi karıştırıp kaydeder
 export const createRoom = async (
   hostName: string, 
   hostId: string, 
-  settings: GameSettings, 
+  settings: GameSettings,
   teamNames: { teamA: string, teamB: string }
 ): Promise<string | null> => {
   const code = generateRoomCode();
+  
+  // ÖNEMLİ: Yeni bir deste sırası oluştur
+  const initialDeckOrder = await generateNewDeckOrder();
   
   const { error: roomError } = await supabase
     .from('rooms')
@@ -96,7 +73,8 @@ export const createRoom = async (
        round_time: settings.roundTime,
        pass_limit: settings.passLimit,
        team_a_name: teamNames.teamA,
-       team_b_name: teamNames.teamB
+       team_b_name: teamNames.teamB,
+       deck_order: initialDeckOrder // Desteyi kaydet
     }]);
 
   if (roomError) {
@@ -118,22 +96,13 @@ export const joinRoom = async (code: string, playerName: string, playerId: strin
   const { data: room } = await supabase.from('rooms').select('code').eq('code', code).single();
   if (!room) return 'NOT_FOUND';
 
-  const { data: players } = await supabase
-    .from('players')
-    .select('team')
-    .eq('room_code', code);
-
+  const { data: players } = await supabase.from('players').select('team').eq('room_code', code);
   const countA = players?.filter(p => p.team === 'A').length || 0;
   const countB = players?.filter(p => p.team === 'B').length || 0;
-
   const assignedTeam = countA <= countB ? 'A' : 'B';
   
   const { error } = await supabase.from('players').insert([{
-      id: playerId,
-      room_code: code,
-      name: playerName,
-      is_host: false,
-      team: assignedTeam 
+      id: playerId, room_code: code, name: playerName, is_host: false, team: assignedTeam 
     }]);
   return error ? 'ERROR' : 'SUCCESS';
 };
@@ -175,7 +144,7 @@ export const startNextTurn = async (
     updateData.status = 'PLAYING';
     updateData.team_a_score = 0;
     updateData.team_b_score = 0;
-    updateData.current_card_index = 0;
+    updateData.current_card_index = 0; // Her zaman 0'dan başlar (ama deste sırası farklıdır)
     updateData.team_a_narrator_index = 0;
     updateData.team_b_narrator_index = 0;
   }
@@ -184,10 +153,7 @@ export const startNextTurn = async (
 };
 
 export const updateGameState = async (roomCode: string, updates: { 
-  scoreA?: number, 
-  scoreB?: number, 
-  cardIndex?: number,
-  passCount?: number 
+  scoreA?: number, scoreB?: number, cardIndex?: number, passCount?: number 
 }) => {
   const dbUpdates: any = {};
   if (updates.scoreA !== undefined) dbUpdates.team_a_score = updates.scoreA;
@@ -198,13 +164,17 @@ export const updateGameState = async (roomCode: string, updates: {
   await supabase.from('rooms').update(dbUpdates).eq('code', roomCode);
 };
 
+// GÜNCELLENDİ: Reset atarken desteyi YENİDEN KARIŞTIRIR
 export const resetGame = async (roomCode: string) => {
+  const newDeckOrder = await generateNewDeckOrder();
+  
   await supabase.from('rooms').update({
     status: 'LOBBY',
     team_a_score: 0,
     team_b_score: 0,
     current_card_index: 0,
     pass_count: 0,
+    deck_order: newDeckOrder // Yeni sırayı kaydet
   }).eq('code', roomCode);
 };
 
