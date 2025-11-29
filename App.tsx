@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { GameState, Team, CardData, GameSettings, Player } from './types';
 import { INITIAL_TEAMS, DEFAULT_SETTINGS } from './constants';
 import { 
-  getAllCardsRaw, // GÜNCELLENDİ
+  getAllCardsRaw, 
   createRoom, 
   joinRoom, 
   leaveRoom, 
@@ -31,9 +31,9 @@ function App() {
   const [gameState, setGameState] = useState<GameState>(GameState.WELCOME);
   const [currentUser, setCurrentUser] = useState<Player | null>(null);
   
-  // KART YÖNETİMİ
-  const [allCardsMap, setAllCardsMap] = useState<Record<string, CardData>>({}); // ID -> Card Haritası
-  const [activeDeck, setActiveDeck] = useState<CardData[]>([]); // O anki sıralı deste
+  // DÜZELTME: 'cards' state'ini sildik. Sadece 'activeDeck' kullanacağız.
+  const [allCardsMap, setAllCardsMap] = useState<Record<string, CardData>>({}); 
+  const [activeDeck, setActiveDeck] = useState<CardData[]>([]); 
   
   const [teams, setTeams] = useState<Team[]>(INITIAL_TEAMS);
   const [gameSettings, setGameSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
@@ -46,7 +46,7 @@ function App() {
   const [passCount, setPassCount] = useState(0);
   const [timeLeft, setTimeLeft] = useState(0);
   const [turnExpiresAt, setTurnExpiresAt] = useState<string | null>(null);
-  const [currentDeckOrderStr, setCurrentDeckOrderStr] = useState<string>(''); // Sıralama değişti mi kontrolü
+  const [currentDeckOrderStr, setCurrentDeckOrderStr] = useState<string>(''); 
   
   const [isProcessingTurn, setIsProcessingTurn] = useState(false);
   const lastHandledTurnRef = useRef<string | null>(null);
@@ -61,7 +61,7 @@ function App() {
   const isMyTeamActive = activeTeam.players.some(p => p.id === currentUser?.id);
   const shouldMaskCard = isMyTeamActive && !isMeNarrator;
 
-  // --- 1. Başlangıçta Tüm Kartları Çek ve Haritala ---
+  // --- 1. Başlangıçta Tüm Kartları Çek ---
   useEffect(() => {
     const fetchAllCards = async () => {
       const cards = await getAllCardsRaw();
@@ -158,14 +158,13 @@ function App() {
              passLimit: roomData.pass_limit ?? DEFAULT_SETTINGS.passLimit
            });
 
-           // YENİ: Deste Sırasını Kontrol Et ve Oluştur
+           // Deste Sırasını Oluştur
            if (roomData.deck_order && Array.isArray(roomData.deck_order)) {
               const orderStr = JSON.stringify(roomData.deck_order);
-              // Eğer veritabanındaki sıra değişmişse (Yeni oyun başladıysa)
               if (orderStr !== currentDeckOrderStr && Object.keys(allCardsMap).length > 0) {
                   const sortedDeck = roomData.deck_order
-                      .map((id: string) => allCardsMap[id]) // ID'leri karta çevir
-                      .filter((c: CardData | undefined) => c !== undefined); // Boşları at
+                      .map((id: string) => allCardsMap[id])
+                      .filter((c: CardData | undefined) => c !== undefined);
                   
                   setActiveDeck(sortedDeck);
                   setCurrentDeckOrderStr(orderStr);
@@ -233,7 +232,6 @@ function App() {
   // --- ACTIONS ---
   const startGame = useCallback(async () => {
     setIsLoading(true);
-    // Kart çekme işlemi artık LOBBY'de veya oluşturulurken yapılıyor ve sync ile geliyor
     await startNextTurn(roomCode, 'A', gameSettings.roundTime, undefined, true);
     setIsLoading(false);
   }, [roomCode, gameSettings]);
@@ -246,8 +244,12 @@ function App() {
      const newIndexB = teams[1].currentNarratorIndex + (currentTeamIndex === 1 ? 1 : 0);
      setCurrentTeamIndex(currentTeamIndex === 0 ? 1 : 0);
      setTimeLeft(gameSettings.roundTime); 
+     
      await startNextTurn(roomCode, nextTeam, gameSettings.roundTime, { indexA: newIndexA, indexB: newIndexB });
-     await updateGameState(roomCode, { cardIndex: (currentCardIndex + 1) % activeDeck.length });
+     // DÜZELTME: Artık 'activeDeck.length' kullanılıyor. Kartlar bitmeyecek şekilde mod alındı.
+     // Eğer activeDeck henüz yüklenmediyse 1'e böl ki hata vermesin (0 kart varsa index 0 olur)
+     const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
+     await updateGameState(roomCode, { cardIndex: (currentCardIndex + 1) % deckLen });
   };
 
   const handleTimeUp = useCallback(() => { handleNextTurn(); }, [handleNextTurn]);
@@ -256,11 +258,15 @@ function App() {
     const isTeamA = currentTeamIndex === 0;
     const newScore = teams[currentTeamIndex].score + 1;
     setTeams(prev => { const u = [...prev]; u[currentTeamIndex].score = newScore; return u; });
-    setCurrentCardIndex((prev) => (prev + 1) % activeDeck.length);
+    
+    // Optimistic Update
+    const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
+    setCurrentCardIndex((prev) => (prev + 1) % deckLen);
+
     if (newScore >= gameSettings.targetScore) {
        await supabase.from('rooms').update({ status: 'FINISHED', [isTeamA ? 'team_a_score' : 'team_b_score']: newScore }).eq('code', roomCode);
     } else {
-       await updateGameState(roomCode, { scoreA: isTeamA ? newScore : undefined, scoreB: !isTeamA ? newScore : undefined, cardIndex: (currentCardIndex + 1) % activeDeck.length });
+       await updateGameState(roomCode, { scoreA: isTeamA ? newScore : undefined, scoreB: !isTeamA ? newScore : undefined, cardIndex: (currentCardIndex + 1) % deckLen });
     }
   };
 
@@ -268,25 +274,55 @@ function App() {
     const isTeamA = currentTeamIndex === 0;
     const newScore = teams[currentTeamIndex].score - 1;
     setTeams(prev => { const u = [...prev]; u[currentTeamIndex].score = newScore; return u; });
-    setCurrentCardIndex((prev) => (prev + 1) % activeDeck.length);
-    await updateGameState(roomCode, { scoreA: isTeamA ? newScore : undefined, scoreB: !isTeamA ? newScore : undefined, cardIndex: (currentCardIndex + 1) % activeDeck.length });
+    
+    const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
+    setCurrentCardIndex((prev) => (prev + 1) % deckLen);
+    
+    await updateGameState(roomCode, { scoreA: isTeamA ? newScore : undefined, scoreB: !isTeamA ? newScore : undefined, cardIndex: (currentCardIndex + 1) % deckLen });
   };
 
   const handlePass = async () => {
     if (gameSettings.passLimit > 0 && passCount >= gameSettings.passLimit) return;
     setPassCount(prev => prev + 1);
-    setCurrentCardIndex((prev) => (prev + 1) % activeDeck.length);
-    await updateGameState(roomCode, { passCount: passCount + 1, cardIndex: (currentCardIndex + 1) % activeDeck.length });
+    
+    const deckLen = activeDeck.length > 0 ? activeDeck.length : 1;
+    setCurrentCardIndex((prev) => (prev + 1) % deckLen);
+    
+    await updateGameState(roomCode, { passCount: passCount + 1, cardIndex: (currentCardIndex + 1) % deckLen });
   };
 
   // --- RENDER ---
   if (gameState === GameState.WELCOME) return <WelcomeScreen onCreateRoom={handleCreateRoom} onJoinRoom={handleJoinRoomInit} />;
   if (gameState === GameState.JOIN_ROOM) return <JoinRoomScreen onBack={() => setGameState(GameState.WELCOME)} onJoin={handleJoinRoomSubmit} isLoading={isLoading} />;
-  if (gameState === GameState.LOBBY && currentUser) return <LobbyScreen roomCode={roomCode} teams={teams} currentUser={currentUser} settings={gameSettings} onStartGame={startGame} onSwitchTeam={switchTeam} onLeave={handleLeaveLobby} onUpdateSettings={handleUpdateSettings} isHost={currentUser.isHost} />;
-  if (gameState === GameState.GAME_OVER) return <GameOverScreen teams={teams} onRestart={handleRestartGame} onReturnToLobby={handleReturnToLobby} onHome={handleLeaveLobby} isHost={currentUser?.isHost ?? false} />;
+  
+  if (gameState === GameState.LOBBY && currentUser) {
+    return (
+      <LobbyScreen 
+        roomCode={roomCode} teams={teams} currentUser={currentUser} 
+        settings={gameSettings} 
+        onStartGame={startGame} onSwitchTeam={switchTeam} onLeave={handleLeaveLobby} 
+        onUpdateSettings={handleUpdateSettings} 
+        isHost={currentUser.isHost}
+      />
+    );
+  }
+
+  if (gameState === GameState.GAME_OVER) {
+    return (
+      <GameOverScreen 
+        teams={teams} 
+        onRestart={handleRestartGame} 
+        onReturnToLobby={handleReturnToLobby} 
+        onHome={handleLeaveLobby} 
+        isHost={currentUser?.isHost ?? false} 
+      />
+    );
+  }
 
   if (gameState === GameState.PLAYING) {
-    const currentCard = activeDeck[currentCardIndex]; // ARTIK activeDeck'ten ÇEKİYOR
+    // EĞER DESTE HENÜZ YÜKLENMEDİYSE BOŞ GÖSTERMEYELİM
+    const currentCard = activeDeck.length > 0 ? activeDeck[currentCardIndex] : null;
+    
     let roleText = isMeNarrator ? "ANLATIYORSUN" : (isMyTeamActive ? "TAHMİN ET!" : "YASAK KONTROLÜ!");
     let roleColor = isMeNarrator ? "text-brand-primary" : (isMyTeamActive ? "text-brand-secondary" : "text-brand-danger");
 
@@ -308,13 +344,13 @@ function App() {
               )}
            </div>
            <div className="w-full flex-1 flex flex-col justify-center min-h-0 max-h-[600px]">
-              {isProcessingTurn ? (
+              {isProcessingTurn || !currentCard ? (
                  <div className="animate-pulse text-center text-slate-500 flex flex-col items-center gap-4">
                     <div className="p-4 bg-slate-800 rounded-full border border-slate-700"><Loader2 className="animate-spin text-brand-primary" size={32} /></div>
                     <span className="text-xs font-bold uppercase tracking-widest">Hazırlanıyor...</span>
                  </div>
               ) : (
-                 currentCard && <GameCard card={currentCard} isMasked={shouldMaskCard} />
+                 <GameCard card={currentCard} isMasked={shouldMaskCard} />
               )}
            </div>
         </div>
