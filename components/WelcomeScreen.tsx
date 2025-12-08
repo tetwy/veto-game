@@ -143,10 +143,10 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onCreateRoom, onJoinRoom,
                            }}
                            placeholder="Nickname gir..."
                            className="w-full bg-transparent px-4 text-white font-semibold text-lg outline-none placeholder:font-medium placeholder:text-slate-600 h-full"
-                           maxLength={12}
+                           maxLength={20}
                          />
                          <div className="pr-4 text-xs font-bold text-slate-600">
-                           {name.length}/12
+                           {name.length}/20
                          </div>
                       </div>
                    </div>
