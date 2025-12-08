@@ -7,4 +7,17 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Supabase URL ve Key bilgisi .env dosyasında bulunamadı!');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const memoryStorage = {
+  getItem: () => null,
+  setItem: () => {},
+  removeItem: () => {},
+};
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: false,
+    storage: memoryStorage,
+    autoRefreshToken: false,
+    detectSessionInUrl: false
+  }
+});
