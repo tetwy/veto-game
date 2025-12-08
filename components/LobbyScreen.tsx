@@ -10,7 +10,7 @@ interface LobbyScreenProps {
   onStartGame: () => void;
   onSwitchTeam: (teamId: 'A' | 'B') => void;
   onLeave: () => void;
-  onUpdateSettings?: (newSettings: GameSettings) => void; // Yeni Prop
+  onUpdateSettings?: (newSettings: GameSettings) => void;
   isHost: boolean;
 }
 
@@ -26,7 +26,6 @@ const LobbyScreen: React.FC<LobbyScreenProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Ayar değiştirme yardımcı fonksiyonu
   const handleChange = (key: keyof GameSettings, value: number) => {
     if (onUpdateSettings) {
       onUpdateSettings({ ...settings, [key]: value });
@@ -36,25 +35,32 @@ const LobbyScreen: React.FC<LobbyScreenProps> = ({
   return (
     <div className="min-h-[100dvh] bg-slate-900 p-4 pb-24 flex flex-col items-center overflow-y-auto">
       
-      {/* Top Bar */}
+      {/* Top Bar - Sadece Çıkış Butonu Kaldı */}
       <div className="w-full max-w-4xl flex justify-between items-center mb-6 pt-2">
          <button onClick={onLeave} className="flex items-center gap-2 text-slate-400 hover:text-white hover:bg-slate-800 px-4 py-2 rounded-xl transition-all active:scale-95">
            <LogOut size={20} /> <span className="font-bold text-sm">Çıkış</span>
          </button>
-         <div className="flex flex-col items-end">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Oda Kodu</span>
-            <button onClick={copyCode} className="flex items-center gap-2 text-2xl font-black text-white hover:text-brand-primary transition-colors">
-               {roomCode} {copied ? <CheckCircle size={18} className="text-green-500"/> : <Copy size={18}/>}
-            </button>
-         </div>
       </div>
 
-      <div className="w-full max-w-4xl mb-8">
-         <h1 className="text-3xl font-black text-white mb-1">BEKLEME ODASI</h1>
-         <div className="flex items-center gap-2 text-brand-success text-sm font-medium animate-pulse">
-            <span className="w-2 h-2 bg-brand-success rounded-full"></span>
-            {isHost ? "Oyunu başlatmanı bekliyorlar..." : "Oda sahibi oyunu başlatacak..."}
+      {/* Header Area - Başlık ve Oda Kodu Yan Yana */}
+      <div className="w-full max-w-4xl mb-8 flex items-end justify-between">
+         <div>
+            <h1 className="text-3xl font-black text-white mb-1">BEKLEME ODASI</h1>
+            <div className="flex items-center gap-2 text-brand-success text-sm font-medium animate-pulse">
+                <span className="w-2 h-2 bg-brand-success rounded-full"></span>
+                {isHost ? "Oyunu başlatmanı bekliyorlar..." : "Oda sahibi oyunu başlatacak..."}
+            </div>
          </div>
+
+         {/* Oda Kodu - Sadece Host Görür ve Başlıkla Aynı Hizada */}
+         {isHost && (
+             <div className="flex flex-col items-end">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Oda Kodu</span>
+                <button onClick={copyCode} className="flex items-center gap-2 text-2xl font-black text-white hover:text-brand-primary transition-colors">
+                   {roomCode} {copied ? <CheckCircle size={18} className="text-green-500"/> : <Copy size={18}/>}
+                </button>
+             </div>
+         )}
       </div>
 
       {/* Teams Grid */}
