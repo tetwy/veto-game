@@ -2,7 +2,6 @@ import { supabase } from '../supabaseClient';
 import { CardData, Player, GameSettings } from '../types';
 
 // --- YARDIMCI: Gerçek Karıştırma (Fisher-Yates Shuffle) ---
-// Bu sefer seed yok, tamamen rastgele karıştırır.
 const shuffleArray = <T>(array: T[]): T[] => {
   const newArr = [...array];
   for (let i = newArr.length - 1; i > 0; i--) {
@@ -23,7 +22,7 @@ const generateRoomCode = () => {
   return code;
 };
 
-// 1. Tüm kartları ham olarak çeker (Sıralama yapmaz)
+// 1. Tüm kartları ham olarak çeker
 export const getAllCardsRaw = async (): Promise<CardData[]> => {
   const { data } = await supabase.from('cards').select('*');
   return (data as CardData[]) || [];
@@ -52,7 +51,7 @@ export const getRoomDetails = async (roomCode: string) => {
   return data;
 };
 
-// GÜNCELLENDİ: Odayı kurarken desteyi karıştırıp kaydeder
+// Odayı kurarken desteyi karıştırıp kaydeder
 export const createRoom = async (
   hostName: string, 
   hostId: string, 
@@ -61,7 +60,6 @@ export const createRoom = async (
 ): Promise<string | null> => {
   const code = generateRoomCode();
   
-  // ÖNEMLİ: Yeni bir deste sırası oluştur
   const initialDeckOrder = await generateNewDeckOrder();
   
   const { error: roomError } = await supabase
@@ -74,7 +72,7 @@ export const createRoom = async (
        pass_limit: settings.passLimit,
        team_a_name: teamNames.teamA,
        team_b_name: teamNames.teamB,
-       deck_order: initialDeckOrder // Desteyi kaydet
+       deck_order: initialDeckOrder
     }]);
 
   if (roomError) {
@@ -119,6 +117,8 @@ export const leaveRoom = async (roomCode: string, playerId: string) => {
   }
 };
 
+// --- KRİTİK GÜNCELLEME BURADA ---
+// Artık manuel update yerine RPC (start_next_turn_atomic) kullanıyoruz.
 export const startNextTurn = async (
   roomCode: string, 
   nextTeam: 'A' | 'B', 
@@ -126,45 +126,37 @@ export const startNextTurn = async (
   newNarratorIndices?: { indexA: number, indexB: number },
   isGameStart = false
 ) => {
-  const bufferTime = 2000; 
-  const expiresAt = new Date(Date.now() + (roundTime * 1000) + bufferTime).toISOString();
-  
-  const updateData: any = {
-    current_team: nextTeam,
-    pass_count: 0,
-    turn_expires_at: expiresAt,
-  };
+  // Parametreleri SQL fonksiyonunun beklediği formatta gönderiyoruz.
+  const { error } = await supabase.rpc('start_next_turn_atomic', {
+    p_room_code: roomCode,
+    p_next_team: nextTeam,
+    p_round_time: roundTime,
+    p_next_narrator_a: newNarratorIndices?.indexA ?? null, // SQL'e null gidebilir
+    p_next_narrator_b: newNarratorIndices?.indexB ?? null,
+    p_is_game_start: isGameStart
+  });
 
-  if (newNarratorIndices) {
-    updateData.team_a_narrator_index = newNarratorIndices.indexA;
-    updateData.team_b_narrator_index = newNarratorIndices.indexB;
+  if (error) {
+    console.error("Tur başlatma hatası (RPC):", error);
   }
-
-  if (isGameStart) {
-    updateData.status = 'PLAYING';
-    updateData.team_a_score = 0;
-    updateData.team_b_score = 0;
-    updateData.current_card_index = 0; // Her zaman 0'dan başlar (ama deste sırası farklıdır)
-    updateData.team_a_narrator_index = 0;
-    updateData.team_b_narrator_index = 0;
-  }
-
-  await supabase.from('rooms').update(updateData).eq('code', roomCode);
 };
 
+// Bu fonksiyonu manuel state düzeltmeleri için tutuyoruz ama oyun akışında RPC'leri tercih et.
 export const updateGameState = async (roomCode: string, updates: { 
   scoreA?: number, scoreB?: number, cardIndex?: number, passCount?: number 
 }) => {
-  const dbUpdates: any = {};
+  // Tip güvenliği için 'any' yerine kısmi bir nesne oluşturuyoruz
+  const dbUpdates: Record<string, any> = {};
   if (updates.scoreA !== undefined) dbUpdates.team_a_score = updates.scoreA;
   if (updates.scoreB !== undefined) dbUpdates.team_b_score = updates.scoreB;
   if (updates.cardIndex !== undefined) dbUpdates.current_card_index = updates.cardIndex;
   if (updates.passCount !== undefined) dbUpdates.pass_count = updates.passCount;
 
-  await supabase.from('rooms').update(dbUpdates).eq('code', roomCode);
+  if (Object.keys(dbUpdates).length > 0) {
+    await supabase.from('rooms').update(dbUpdates).eq('code', roomCode);
+  }
 };
 
-// GÜNCELLENDİ: Reset atarken desteyi YENİDEN KARIŞTIRIR
 export const resetGame = async (roomCode: string) => {
   const newDeckOrder = await generateNewDeckOrder();
   
@@ -174,7 +166,7 @@ export const resetGame = async (roomCode: string) => {
     team_b_score: 0,
     current_card_index: 0,
     pass_count: 0,
-    deck_order: newDeckOrder // Yeni sırayı kaydet
+    deck_order: newDeckOrder 
   }).eq('code', roomCode);
 };
 
@@ -193,12 +185,12 @@ export const subscribeToRoom = (roomCode: string, onUpdate: (payload: any) => vo
   return channel.subscribe();
 };
 
-// YENİ: Güvenli Kart İlerletme
+// --- GÜVENLİ RPC FONKSİYONLARI ---
+
 export const safeIncrementCard = async (roomCode: string) => {
   await supabase.rpc('increment_card_index', { room_code: roomCode, amount: 1 });
 };
 
-// YENİ: Güvenli Skor Artırma (Doğru)
 export const safeScorePoint = async (roomCode: string, team: 'A' | 'B') => {
   if (team === 'A') {
     await supabase.rpc('increment_score_a', { room_code: roomCode, amount: 1 });
@@ -209,7 +201,6 @@ export const safeScorePoint = async (roomCode: string, team: 'A' | 'B') => {
   await safeIncrementCard(roomCode);
 };
 
-// YENİ: Güvenli Skor Düşürme (Yasak)
 export const safeLosePoint = async (roomCode: string, team: 'A' | 'B') => {
   if (team === 'A') {
     await supabase.rpc('increment_score_a', { room_code: roomCode, amount: -1 });
@@ -219,7 +210,6 @@ export const safeLosePoint = async (roomCode: string, team: 'A' | 'B') => {
   await safeIncrementCard(roomCode);
 };
 
-// YENİ: Güvenli Pas
 export const safePass = async (roomCode: string) => {
   await supabase.rpc('increment_pass', { room_code: roomCode });
   await safeIncrementCard(roomCode);
