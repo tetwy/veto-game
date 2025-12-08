@@ -8,16 +8,25 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 const memoryStorage = {
-  getItem: () => null,
-  setItem: () => {},
-  removeItem: () => {},
+  getItem: (key: string) => {
+    return null;
+  },
+  setItem: (key: string, value: string) => {
+    // Hiçbir şey yapma (Diske yazma)
+  },
+  removeItem: (key: string) => {
+    // Hiçbir şey yapma
+  },
 };
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: false,
-    storage: memoryStorage,
     autoRefreshToken: false,
-    detectSessionInUrl: false
-  }
+    detectSessionInUrl: false,
+    storage: memoryStorage,
+  },
+  global: {
+    headers: { 'x-my-custom-header': 'veto-game' },
+  },
 });
