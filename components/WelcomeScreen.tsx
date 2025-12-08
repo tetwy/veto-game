@@ -3,7 +3,8 @@ import { Play, Users, User, Zap, Gamepad2, Sparkles, Hash, ArrowRight, Crown } f
 
 interface WelcomeScreenProps {
   onCreateRoom: (playerName: string) => void;
-  onJoinRoom: (playerName: string, roomCode: string) => void;
+  // GÜNCELLEME: onJoinRoom artık bir Promise<boolean> döndürüyor
+  onJoinRoom: (playerName: string, roomCode: string) => Promise<boolean>;
   isJoining?: boolean;
 }
 
@@ -22,7 +23,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onCreateRoom, onJoinRoom,
     onCreateRoom(name.trim());
   };
 
-  const handleJoin = () => {
+  const handleJoin = async () => {
     if (!name.trim()) {
       setError('Lütfen bir isim gir.');
       return;
@@ -31,31 +32,30 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onCreateRoom, onJoinRoom,
       setError('Geçerli bir oda kodu gir.');
       return;
     }
-    onJoinRoom(name.trim(), roomCode.trim().toUpperCase());
+    
+    // GÜNCELLEME: Fonksiyonu await ile çağırıp sonucu kontrol ediyoruz
+    const success = await onJoinRoom(name.trim(), roomCode.trim().toUpperCase());
+    
+    // Eğer başarısız olursa (yani oda yoksa) hatayı karta basıyoruz
+    if (!success) {
+      setError('Oda bulunamadı veya kod hatalı!');
+    }
   };
 
   return (
     <div className="min-h-[100dvh] bg-slate-950 relative flex overflow-hidden font-sans selection:bg-brand-primary selection:text-white">
       
       {/* --- ARKA PLAN EFEKTLERİ --- */}
-      <div className="absolute inset-0 z-0">
+      <div className="absolute inset-0 z-0 pointer-events-none">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"></div>
         <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-brand-primary/20 rounded-full blur-[120px] animate-pulse-fast"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-brand-secondary/20 rounded-full blur-[120px] animate-pulse-fast delay-75"></div>
-        {/* Ortaya eklenen hafif mor ışık */}
         <div className="absolute top-[40%] left-[50%] translate-x-[-50%] w-[300px] h-[300px] bg-indigo-500/10 rounded-full blur-[100px]"></div>
       </div>
 
-      {/* LAYOUT DÜZENLEMESİ: 
-         - justify-between KALDIRILDI -> justify-center EKLENDİ (Ortalamak için)
-         - gap-12 -> lg:gap-24 (İki öge birbirine çok girmesin diye masaüstünde boşluk artırıldı)
-      */}
       <div className="container mx-auto px-4 relative z-10 flex flex-col lg:flex-row items-center justify-center h-full min-h-[100dvh] gap-12 lg:gap-24 py-12">
         
-        {/* --- SOL TARAF --- 
-            - flex-1 KALDIRILDI (Sağa doğru tüm boşluğu itmemesi için)
-            - w-full lg:w-auto EKLENDİ (Kendi alanını koruması için)
-        */}
+        {/* --- SOL TARAF --- */}
         <div className="w-full lg:w-auto flex flex-col items-center lg:items-start text-center lg:text-left space-y-8 max-w-2xl">
            <div className="relative">
               <div className="absolute -top-12 -left-12 text-brand-primary/10 animate-bounce duration-[3000ms]">
@@ -99,19 +99,15 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onCreateRoom, onJoinRoom,
            </div>
         </div>
 
-        {/* --- SAĞ TARAF: YENİLENMİŞ MODERN GİRİŞ KARTI --- 
-            - lg:mr-8 KALDIRILDI (Artık ortalandığı için sağ margin'e gerek yok, optik dengeyi bozuyordu)
-        */}
+        {/* --- SAĞ TARAF: GİRİŞ KARTI --- */}
         <div className="w-full max-w-md">
-           
-           {/* Kart Container */}
            <div className="group relative bg-slate-900/60 backdrop-blur-2xl border border-white/10 p-8 rounded-[2.5rem] shadow-[0_0_40px_-10px_rgba(0,0,0,0.5)] overflow-hidden transition-all duration-500 hover:shadow-[0_0_60px_-15px_rgba(79,70,229,0.15)] hover:border-white/20">
              
-             {/* Dekoratif Işık Topları (Kart İçi) */}
+             {/* Işıklar */}
              <div className="absolute -top-24 -right-24 w-48 h-48 bg-brand-secondary/20 rounded-full blur-3xl pointer-events-none"></div>
              <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-brand-primary/20 rounded-full blur-3xl pointer-events-none"></div>
 
-             {/* Kart Başlığı */}
+             {/* Başlık */}
              <div className="relative mb-8 text-center">
                 <div className="inline-flex p-3 bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-inner border border-white/5 mb-4">
                    <User className="text-brand-primary" size={32} />
@@ -120,7 +116,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onCreateRoom, onJoinRoom,
                 <p className="text-slate-400 text-sm mt-1">Başlamak için detayları gir.</p>
              </div>
 
-             {/* İsim Input */}
+             {/* Form Alanı */}
              <div className="space-y-6">
                 <div>
                    <label className={`text-xs font-bold uppercase tracking-wider ml-1 transition-colors duration-300 ${focusedInput === 'name' ? 'text-brand-primary' : 'text-slate-500'}`}>
@@ -152,9 +148,8 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onCreateRoom, onJoinRoom,
                    </div>
                 </div>
 
-                {/* Sekmeler (Tabs) */}
+                {/* Sekmeler */}
                 <div className="p-1.5 bg-slate-950/80 rounded-2xl border border-white/5 flex relative">
-                   {/* Kayan Arkaplan */}
                    <div 
                       className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-slate-800 rounded-xl shadow-lg transition-all duration-300 ease-out border border-white/10 ${activeTab === 'create' ? 'left-1.5' : 'left-[calc(50%+1.5px)]'}`}
                    ></div>
@@ -197,7 +192,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onCreateRoom, onJoinRoom,
                       </button>
                    ) : (
                       <div className="space-y-4 animate-fadeIn">
-                         <div className={`relative flex items-center bg-slate-950/50 border transition-all duration-300 rounded-2xl h-16 overflow-hidden ${error && !roomCode ? 'border-red-500/50' : focusedInput === 'code' ? 'border-brand-secondary/50 bg-slate-900/80 shadow-[0_0_20px_-5px_rgba(34,197,94,0.2)]' : 'border-white/10'}`}>
+                         <div className={`relative flex items-center bg-slate-950/50 border transition-all duration-300 rounded-2xl h-16 overflow-hidden ${error ? 'border-red-500/50 shadow-[0_0_20px_-5px_rgba(239,68,68,0.3)]' : focusedInput === 'code' ? 'border-brand-secondary/50 bg-slate-900/80 shadow-[0_0_20px_-5px_rgba(34,197,94,0.2)]' : 'border-white/10'}`}>
                             <div className={`pl-5 transition-colors ${focusedInput === 'code' ? 'text-brand-secondary' : 'text-slate-500'}`}>
                                <Hash size={20} />
                             </div>
@@ -229,7 +224,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onCreateRoom, onJoinRoom,
                    )}
                 </div>
 
-                {/* Hata Mesajı */}
+                {/* Hata Mesajı Alanı */}
                 {error && (
                    <div className="flex items-center gap-2 text-red-400 text-xs font-bold bg-red-500/10 border border-red-500/20 p-3 rounded-xl animate-fadeIn">
                       <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></div>

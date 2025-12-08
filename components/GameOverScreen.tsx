@@ -1,11 +1,11 @@
 import React from 'react';
 import { Team } from '../types';
-import { Trophy, RefreshCw, Home, ArrowLeft } from 'lucide-react';
+import { Trophy, RefreshCw, Home, ArrowLeft, Medal } from 'lucide-react';
 
 interface GameOverScreenProps {
   teams: Team[];
-  onRestart: () => void;       // Host için
-  onReturnToLobby: () => void; // Misafir için (veya Host'un kişisel dönüşü)
+  onRestart: () => void;
+  onReturnToLobby: () => void;
   onHome: () => void;
   isHost: boolean;
 }
@@ -15,64 +15,120 @@ const GameOverScreen: React.FC<GameOverScreenProps> = ({ teams, onRestart, onRet
   const winner = sortedTeams[0];
   const isDraw = sortedTeams[0].score === sortedTeams[1].score;
 
+  // Kazananın rengini belirle (Arka plan efekti için)
+  const winnerColorClass = isDraw 
+    ? 'from-slate-500 to-slate-700' 
+    : winner.id === 'A' 
+      ? 'from-brand-primary to-brand-secondary' // A Takımı (Mor/Mavi)
+      : 'from-brand-success to-emerald-600';    // B Takımı (Yeşil)
+
+  const glowColor = isDraw ? 'bg-white' : winner.id === 'A' ? 'bg-brand-secondary' : 'bg-brand-success';
+
   return (
-    <div className="flex flex-col items-center justify-center min-h-[100dvh] p-6 text-center animate-[fadeIn_0.5s_ease-out] bg-slate-900 relative overflow-hidden">
-      <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-10"></div>
-      <div className={`absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-brand-primary to-brand-accent`}></div>
-
-      <div className="mb-6 relative z-10">
-        <div className="absolute inset-0 bg-brand-primary blur-[80px] opacity-20 rounded-full"></div>
-        <Trophy size={100} className="text-brand-warning relative z-10 drop-shadow-2xl animate-bounce" fill="currentColor" />
-      </div>
-
-      <h1 className="text-3xl font-bold text-slate-400 mb-2 tracking-widest uppercase">
-        {isDraw ? "Berabere!" : "Kazanan"}
-      </h1>
+    <div className="relative flex flex-col items-center justify-center min-h-[100dvh] w-full overflow-hidden bg-slate-950 font-sans selection:bg-brand-primary selection:text-white">
       
-      {!isDraw && (
-        <h2 className={`text-6xl font-black mb-10 ${winner.color} drop-shadow-lg tracking-tighter`}>
-          {winner.name}
-        </h2>
-      )}
-
-      <div className="w-full max-w-sm bg-slate-800/50 rounded-3xl p-6 border border-slate-700/50 backdrop-blur-md mb-10 shadow-2xl relative z-10">
-        {sortedTeams.map((team, idx) => (
-          <div key={team.id} className="flex justify-between items-center py-4 border-b border-slate-700/50 last:border-0">
-            <div className="flex items-center gap-4">
-              <span className={`text-xl font-black ${idx === 0 ? 'text-brand-warning' : 'text-slate-600'}`}>#{idx + 1}</span>
-              <span className={`font-bold text-xl ${team.color}`}>{team.name}</span>
-            </div>
-            <span className="text-3xl font-black text-white">{team.score}</span>
-          </div>
-        ))}
+      {/* --- ARKA PLAN EFEKTLERİ --- */}
+      <div className="absolute inset-0 z-0 pointer-events-none">
+        {/* Grid */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"></div>
+        
+        {/* Ana Glow (Kazanan Rengine Göre) */}
+        <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full blur-[150px] opacity-20 bg-gradient-to-tr ${winnerColorClass} animate-pulse-fast`}></div>
       </div>
 
-      <div className="flex flex-col w-full max-w-xs gap-3 relative z-10">
-        {isHost ? (
-          <button 
-            onClick={onRestart}
-            className="w-full py-4 bg-brand-primary hover:bg-indigo-500 text-white rounded-2xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 text-lg"
-          >
-            <RefreshCw size={22} />
-            Lobiye Dön ve Sıfırla
-          </button>
-        ) : (
-          <button 
-            onClick={onReturnToLobby}
-            className="w-full py-4 bg-brand-primary hover:bg-indigo-500 text-white rounded-2xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 text-lg"
-          >
-             <ArrowLeft size={22} />
-             Lobiye Dön
-          </button>
-        )}
+      {/* --- İÇERİK --- */}
+      <div className="relative z-10 flex flex-col items-center w-full max-w-lg px-6">
         
-        <button 
-          onClick={onHome}
-          className="w-full py-4 bg-transparent hover:bg-slate-800 text-slate-400 hover:text-white rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
-        >
-          <Home size={20} />
-          Çıkış Yap
-        </button>
+        {/* KUPA ALANI */}
+        <div className="relative mb-8">
+           <div className={`absolute inset-0 ${glowColor} blur-[60px] opacity-40 rounded-full animate-pulse`}></div>
+           <Trophy size={140} className="text-brand-warning relative z-10 drop-shadow-[0_0_30px_rgba(245,158,11,0.6)] animate-bounce" fill="currentColor" strokeWidth={1} />
+           
+           {/* Konfetimsi noktalar (CSS ile basit dekor) */}
+           <div className="absolute -top-10 -left-10 w-4 h-4 bg-brand-primary rounded-full animate-ping opacity-75"></div>
+           <div className="absolute -bottom-10 -right-10 w-4 h-4 bg-brand-success rounded-full animate-ping delay-300 opacity-75"></div>
+        </div>
+
+        {/* BAŞLIK VE KAZANAN İSMİ */}
+        <div className="text-center mb-10 space-y-2">
+          <h2 className="text-sm font-bold text-slate-400 tracking-[0.4em] uppercase">
+            {isDraw ? "OYUN SONA ERDİ" : "KAZANAN TAKIM"}
+          </h2>
+          
+          {isDraw ? (
+            <h1 className="text-6xl font-black text-white tracking-tight drop-shadow-2xl">
+              BERABERE!
+            </h1>
+          ) : (
+            <h1 className={`text-6xl md:text-7xl font-black tracking-tighter drop-shadow-2xl uppercase ${winner.color}`}>
+              {winner.name}
+            </h1>
+          )}
+        </div>
+
+        {/* SKOR KARTI */}
+        <div className="w-full bg-slate-900/60 backdrop-blur-2xl border border-white/10 rounded-[2rem] p-6 shadow-2xl mb-8 flex flex-col gap-4">
+           {sortedTeams.map((team, idx) => {
+             const isWinnerLine = idx === 0 && !isDraw;
+             return (
+               <div 
+                 key={team.id} 
+                 className={`
+                   flex justify-between items-center p-4 rounded-2xl border transition-all duration-300
+                   ${isWinnerLine 
+                      ? 'bg-gradient-to-r from-white/10 to-transparent border-brand-warning/30 shadow-[0_0_20px_-5px_rgba(245,158,11,0.2)]' 
+                      : 'bg-slate-950/40 border-white/5 opacity-80'}
+                 `}
+               >
+                  <div className="flex items-center gap-4">
+                     <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-lg ${isWinnerLine ? 'bg-brand-warning text-slate-900 shadow-lg' : 'bg-slate-800 text-slate-500'}`}>
+                        {idx === 0 ? <Trophy size={18} fill="currentColor" /> : <span>#{idx + 1}</span>}
+                     </div>
+                     <div className="flex flex-col">
+                        <span className={`font-black text-lg uppercase tracking-wide ${team.color}`}>{team.name}</span>
+                        {isWinnerLine && <span className="text-[10px] text-brand-warning font-bold uppercase tracking-widest flex items-center gap-1"><Medal size={10} /> Şampiyon</span>}
+                     </div>
+                  </div>
+                  <span className={`text-4xl font-black ${isWinnerLine ? 'text-white drop-shadow-md' : 'text-slate-500'}`}>
+                    {team.score}
+                  </span>
+               </div>
+             );
+           })}
+        </div>
+
+        {/* BUTONLAR */}
+        <div className="flex flex-col gap-3 w-full">
+          {isHost ? (
+            <button 
+              onClick={onRestart}
+              className="group relative w-full overflow-hidden bg-white text-slate-950 font-black text-lg py-4 rounded-2xl shadow-xl transition-all hover:scale-[1.02] active:scale-95"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-brand-primary via-indigo-400 to-brand-primary opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-[length:200%_auto] animate-shimmer"></div>
+              <div className="relative flex items-center justify-center gap-2 z-10 group-hover:text-white transition-colors">
+                <RefreshCw size={20} strokeWidth={3} />
+                <span>YENİDEN OYNA</span>
+              </div>
+            </button>
+          ) : (
+            <button 
+              onClick={onReturnToLobby}
+              className="w-full py-4 bg-brand-primary hover:bg-indigo-500 text-white rounded-2xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95"
+            >
+               <ArrowLeft size={20} strokeWidth={3} />
+               <span>Lobiye Dön</span>
+            </button>
+          )}
+          
+          <button 
+            onClick={onHome}
+            className="w-full py-4 bg-slate-900/50 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 text-slate-400 border border-white/5 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
+          >
+            <Home size={18} />
+            <span>Ana Ekrana Dön</span>
+          </button>
+        </div>
+
       </div>
     </div>
   );

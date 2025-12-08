@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Team, GameSettings, Player } from '../types';
-import { Copy, CheckCircle, Clock, Award, Ban, User, Crown, Play, LogOut, Settings2, Users, Gamepad2 } from 'lucide-react';
+import { Copy, CheckCircle, Clock, Award, Ban, Crown, Play, LogOut, Settings2, Users, Gamepad2 } from 'lucide-react';
 
 interface LobbyScreenProps {
   roomCode: string;
@@ -35,7 +35,7 @@ const LobbyScreen: React.FC<LobbyScreenProps> = ({
   return (
     <div className="min-h-[100dvh] bg-slate-950 relative overflow-hidden font-sans selection:bg-brand-primary selection:text-white flex flex-col items-center">
       
-      {/* --- ARKA PLAN EFEKTLERİ (WelcomeScreen ile Aynı) --- */}
+      {/* --- ARKA PLAN EFEKTLERİ --- */}
       <div className="absolute inset-0 z-0 pointer-events-none">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"></div>
         <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-brand-primary/10 rounded-full blur-[120px] animate-pulse-fast"></div>
@@ -43,17 +43,18 @@ const LobbyScreen: React.FC<LobbyScreenProps> = ({
       </div>
 
       {/* --- İÇERİK CONTAINER --- */}
-      <div className="relative z-10 w-full max-w-6xl p-4 md:p-8 flex flex-col h-full">
+      {/* GÜNCELLEME: pt-12 md:pt-20 eklenerek yukarıdan boşluk artırıldı. flex-col ile içerik akışı sağlandı. */}
+      <div className="relative z-10 w-full max-w-6xl px-4 pb-4 pt-12 md:pt-24 flex flex-col h-full">
 
         {/* HEADER: Başlık ve Çıkış */}
         <div className="flex justify-between items-center mb-8 md:mb-12">
            <div className="flex flex-col">
+              {/* GÜNCELLEME: Yeşil nokta (span) kaldırıldı */}
               <h1 className="text-3xl md:text-5xl font-black tracking-tighter text-white drop-shadow-2xl flex items-center gap-2">
                  BEKLEME ODASI
-                 <span className="hidden md:inline-block w-3 h-3 bg-brand-success rounded-full animate-pulse shadow-[0_0_10px_#22c55e]"></span>
               </h1>
-              <div className="flex items-center gap-2 text-slate-400 text-xs md:text-sm font-medium mt-1">
-                  <span className="md:hidden w-2 h-2 bg-brand-success rounded-full animate-pulse"></span>
+              <div className="flex items-center gap-2 text-slate-400 text-xs md:text-sm font-medium mt-1 pl-1">
+                  {/* Mobildeki nokta da kaldırıldı */}
                   {isHost ? "Ayarları yap ve oyunu başlat." : "Oda sahibinin başlatması bekleniyor..."}
               </div>
            </div>

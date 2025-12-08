@@ -18,11 +18,10 @@ import {
   safePass,
   safeIncrementCard
 } from './services/gameService';
-import { supabase } from './supabaseClient'; // UNUTMA
+import { supabase } from './supabaseClient';
 import { Loader2 } from 'lucide-react';
 
 import WelcomeScreen from './components/WelcomeScreen';
-// JoinRoomScreen importunu sildik (artık gerek yok)
 import LobbyScreen from './components/LobbyScreen';
 import GameCard from './components/GameCard';
 import ScoreBoard from './components/ScoreBoard';
@@ -146,7 +145,7 @@ function App() {
   }, [roomCode, currentUser]);
 
 
-  // --- SETUP ACTIONS (GÜNCELLENDİ) ---
+  // --- SETUP ACTIONS ---
   
   // 1. Oda Oluşturma
   const handleCreateRoom = useCallback(async (playerName: string) => {
@@ -174,8 +173,8 @@ function App() {
     setIsLoading(false);
   }, []);
 
-  // 2. Odaya Direkt Katılma (Yeni Entegre Edilen)
-  const handleJoinRoomDirect = useCallback(async (playerName: string, code: string) => {
+  // 2. Odaya Direkt Katılma (GÜNCELLENDİ: Alert kaldırıldı, Promise<boolean> dönüyor)
+  const handleJoinRoomDirect = useCallback(async (playerName: string, code: string): Promise<boolean> => {
     setIsLoading(true);
     const myId = `p_${Date.now()}`;
     const userToJoin = { id: myId, name: playerName, isHost: false };
@@ -183,16 +182,18 @@ function App() {
     // Önce odaya katılmayı dene
     const result = await joinRoom(code, playerName, myId);
     
+    setIsLoading(false);
+
     if (result === 'SUCCESS') {
       setCurrentUser(userToJoin);
       setRoomCode(code);
       setGameState(GameState.LOBBY);
       setUserManuallyReturnedToLobby(false);
       saveSession(code, userToJoin);
+      return true;
     } else {
-      alert("Hata: Oda bulunamadı veya kod yanlış.");
+      return false;
     }
-    setIsLoading(false);
   }, []);
 
   const handleLeaveLobby = useCallback(async () => {
@@ -472,29 +473,53 @@ function App() {
   if (gameState === GameState.PLAYING) {
     const currentCard = activeDeck.length > 0 ? activeDeck[currentCardIndex] : null;
     let roleText = isMeNarrator ? "ANLATIYORSUN" : (isMyTeamActive ? "TAHMİN ET!" : "YASAK KONTROLÜ!");
-    let roleColor = isMeNarrator ? "text-brand-primary" : (isMyTeamActive ? "text-brand-secondary" : "text-brand-danger");
+    let roleColor = isMeNarrator 
+      ? "text-brand-primary border-brand-primary/30 bg-brand-primary/10" 
+      : (isMyTeamActive 
+          ? "text-brand-secondary border-brand-secondary/30 bg-brand-secondary/10" 
+          : "text-brand-danger border-brand-danger/30 bg-brand-danger/10"
+        );
 
     return (
-      <div className="h-[100dvh] w-full flex flex-col bg-slate-900 overflow-hidden relative">
-        <div className={`absolute top-0 left-0 w-full h-1 z-50 bg-gradient-to-r transition-all duration-500 ${currentTeamIndex === 0 ? 'from-brand-primary to-transparent' : 'from-transparent to-brand-success'}`}></div>
-        <div className="flex-shrink-0 w-full pt-4 px-4 z-30">
-           <GameTimer timeLeft={timeLeft} totalTime={gameSettings.roundTime} isActive={true} onTimeUp={() => {}} />
-           <div className="max-w-5xl mx-auto"><ScoreBoard teams={teams} currentTeamId={activeTeam.id} currentNarrator={currentNarrator} /></div>
+      <div className="h-[100dvh] w-full flex flex-col bg-slate-950 overflow-hidden relative font-sans">
+        
+        {/* --- ORTAK ARKA PLAN --- */}
+        <div className="absolute inset-0 z-0 pointer-events-none">
+          <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"></div>
+          {/* Takım Rengine Göre Parlama */}
+          <div className={`absolute top-[-20%] left-1/2 -translate-x-1/2 w-[800px] h-[600px] rounded-full blur-[120px] opacity-30 transition-colors duration-700 ${currentTeamIndex === 0 ? 'bg-brand-secondary' : 'bg-brand-success'}`}></div>
         </div>
+
+        {/* --- SCOREBOARD HEADER DIŞINDA --- */}
+        <ScoreBoard teams={teams} currentTeamId={activeTeam.id} currentNarrator={currentNarrator} />
+
+        {/* --- HEADER: Timer --- */}
+        {/* z-50 ile ScoreBoard'un üzerinde kalır */}
+        <div className="flex-shrink-0 w-full pt-4 px-4 z-50 relative">
+           <GameTimer timeLeft={timeLeft} totalTime={gameSettings.roundTime} isActive={true} onTimeUp={() => {}} />
+        </div>
+
+        {/* --- ANA OYUN ALANI --- */}
         <div className="flex-1 relative w-full max-w-3xl mx-auto px-4 flex flex-col justify-center items-center min-h-0 z-20">
-           <div className="mb-4 flex flex-col items-center flex-shrink-0 animate-fadeIn">
-              <div className={`px-4 py-1 rounded-full bg-slate-800 border border-slate-700 text-[10px] md:text-xs font-black tracking-[0.2em] uppercase mb-2 shadow-lg ${roleColor}`}>{roleText}</div>
+           
+           {/* Rol Göstergesi */}
+           <div className="mb-6 flex flex-col items-center flex-shrink-0 animate-fadeIn">
+              <div className={`px-6 py-2 rounded-full border backdrop-blur-md text-xs md:text-sm font-black tracking-[0.3em] uppercase mb-2 shadow-lg transition-colors duration-500 ${roleColor}`}>
+                {roleText}
+              </div>
               {currentNarrator && (
                  <div className="flex items-center gap-2 text-slate-400">
-                    <span className="text-xs font-bold uppercase tracking-widest">Anlatan:</span>
-                    <span className="text-white font-bold text-lg shadow-purple-500/20 drop-shadow-md">{currentNarrator.name}</span>
+                    <span className="text-[10px] md:text-xs font-bold uppercase tracking-widest opacity-60">Anlatan</span>
+                    <span className="text-white font-bold text-lg drop-shadow-md">{currentNarrator.name}</span>
                  </div>
               )}
            </div>
-           <div className="w-full flex-1 flex flex-col justify-center min-h-0 max-h-[600px]">
+
+           {/* Kart Alanı */}
+           <div className="w-full flex-1 flex flex-col justify-center min-h-0 max-h-[550px]">
               {isProcessingTurn || !currentCard ? (
                  <div className="animate-pulse text-center text-slate-500 flex flex-col items-center gap-4">
-                    <div className="p-4 bg-slate-800 rounded-full border border-slate-700"><Loader2 className="animate-spin text-brand-primary" size={32} /></div>
+                    <div className="p-4 bg-slate-900/50 rounded-full border border-white/10 shadow-xl"><Loader2 className="animate-spin text-brand-primary" size={32} /></div>
                     <span className="text-xs font-bold uppercase tracking-widest">Hazırlanıyor...</span>
                  </div>
               ) : (
@@ -502,8 +527,10 @@ function App() {
               )}
            </div>
         </div>
+
+        {/* --- CONTROLS --- */}
         {isMeNarrator && !isProcessingTurn && (
-          <div className="flex-shrink-0 w-full p-4 md:p-6 z-40 bg-gradient-to-t from-slate-900 via-slate-900/90 to-transparent">
+          <div className="flex-shrink-0 w-full p-4 md:p-8 z-40 bg-gradient-to-t from-slate-950 via-slate-950/90 to-transparent">
              <div className="max-w-xl mx-auto"><GameControls onCorrect={handleCorrect} onTaboo={handleTaboo} onPass={handlePass} passCount={passCount} passLimit={gameSettings.passLimit} /></div>
           </div>
         )}
